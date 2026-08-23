@@ -1,0 +1,35 @@
+{
+  "name": "@opencouncil/server",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "OpenCouncil server + CLI: convene your LLMs as a council.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "bin": {
+    "opencouncil": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsc --watch --preserveWatchOutput",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opencouncil/shared": "*",
+    "better-sqlite3": "^11.5.0",
+    "fastify": "^4.28.1",
+    "next": "^14.2.15",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

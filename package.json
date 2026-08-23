@@ -1,0 +1,78 @@
+{
+  "name": "opencouncil",
+  "version": "0.1.0",
+  "description": "Self-hosted BYOK platform where multiple LLMs convene as a council to research, deliberate, and agree.",
+  "license": "MIT",
+  "author": "Zeyad Gomaa",
+  "homepage": "https://github.com/Zeyad-Gomaa/OpenCouncil",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zeyad-Gomaa/OpenCouncil.git"
+  },
+  "keywords": [
+    "llm",
+    "ai",
+    "multi-agent",
+    "council",
+    "byok",
+    "deliberation",
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
+  "bin": {
+    "opencouncil": "./bin/opencouncil.js"
+  },
+  "files": [
+    "bin/",
+    "apps/server/dist/",
+    "apps/server/package.json",
+    "apps/web/.next/",
+    "apps/web/public/",
+    "apps/web/package.json",
+    "apps/web/next.config.js",
+    "packages/shared/dist/",
+    "packages/shared/package.json",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "workspaces": [
+    "packages/shared",
+    "apps/server",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "predev": "npm run build -w packages/shared",
+    "dev": "concurrently -n shared,server,web -c yellow,green,cyan \"npm run dev -w packages/shared\" \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w packages/shared && npm run build -w apps/server && npm run build -w apps/web",
+    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server && npm run typecheck -w apps/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node apps/server/dist/cli.js",
+    "serve:api": "node apps/server/dist/index.js",
+    "postinstall": "npm run build || echo '[opencouncil] build skipped — run `npm run build` manually'",
+    "prepare": "node -e \"if(process.env.npm_lifecycle_event==='prepare'&&process.env.NODE_ENV!=='skip-prepare'){require('fs').existsSync('apps/server/dist/cli.js')||console.log('[opencouncil] tip: run `npm run build` to produce the CLI')}\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "fastify": "^4.28.1",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
