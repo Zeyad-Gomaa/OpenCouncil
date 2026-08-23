@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 export default defineProject({
   resolve: {
     alias: {
-      '@opencouncil/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+      '@opencouncil/shared': fileURLToPath(new URL('./src/index.ts', import.meta.url)),
     },
   },
   test: {

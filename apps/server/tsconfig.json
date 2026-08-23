@@ -3,8 +3,12 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@opencouncil/shared": ["../../packages/shared/dist/index.d.ts"]
+    }
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/tests"]
+  "exclude": ["src/tests"]
 }

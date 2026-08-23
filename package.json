@@ -29,34 +29,28 @@
     "apps/server/package.json",
     "apps/web/.next/",
     "apps/web/public/",
-    "apps/web/package.json",
     "apps/web/next.config.js",
-    "packages/shared/dist/",
-    "packages/shared/package.json",
+    "apps/web/tsconfig.json",
     "docs/",
     "README.md",
     "LICENSE",
     ".env.example"
   ],
-  "workspaces": [
-    "packages/shared",
-    "apps/server",
-    "apps/web"
-  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "predev": "npm run build -w packages/shared",
-    "dev": "concurrently -n shared,server,web -c yellow,green,cyan \"npm run dev -w packages/shared\" \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
-    "build": "npm run build -w packages/shared && npm run build -w apps/server && npm run build -w apps/web",
-    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server && npm run typecheck -w apps/web",
+    "build": "npm run build:shared && npm run build:server && npm run build:web",
+    "build:shared": "tsc -p packages/shared",
+    "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
+    "build:web": "next build apps/web",
+    "dev": "npm run build && concurrently -n council,web-dev -c green,cyan \"node apps/server/dist/cli.js\" \"next dev -p 3000 apps/web\"",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
     "serve:api": "node apps/server/dist/index.js",
-    "postinstall": "npm run build || echo '[opencouncil] build skipped — run `npm run build` manually'",
-    "prepare": "node -e \"if(process.env.npm_lifecycle_event==='prepare'&&process.env.NODE_ENV!=='skip-prepare'){require('fs').existsSync('apps/server/dist/cli.js')||console.log('[opencouncil] tip: run `npm run build` to produce the CLI')}\""
+    "prepare": "npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
@@ -72,6 +66,7 @@
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "concurrently": "^9.1.2",
+    "esbuild": "^0.24.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   }
