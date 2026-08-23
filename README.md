@@ -92,7 +92,7 @@ npm run typecheck   # strict TS across the monorepo
 npm run build       # shared → server → web
 ```
 
-Environment: see `.env.example`. Node ≥ 20.
+Environment: see `.env.example`. Node ≥ 22.5 (SQLite is provided by Node; no native addon compilation is required).
 
 ## Security notes
 

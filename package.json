@@ -33,12 +33,12 @@
     ".env.example"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "build": "npm run build:shared && npm run build:server && npm run build:web",
     "build:shared": "tsc -p packages/shared",
-    "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
+    "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
     "build:web": "next build apps/web && node scripts/copy-web.js",
     "dev": "npm run build && concurrently -n council,web-dev -c green,cyan \"node apps/server/dist/cli.js\" \"next dev -p 3000 apps/web\"",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
@@ -49,12 +49,10 @@
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
-    "better-sqlite3": "^11.5.0",
     "fastify": "^4.28.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",

@@ -20,7 +20,7 @@ orchestration, delegation, personas, strategies — is configurable.
 | Monorepo   | npm workspaces | zero extra tooling, ships with node |
 | Web        | Next.js 14 (App Router) + React 18 + SSE | streaming transcript without websocket infra |
 | Server     | Node 20+, Fastify, ESM | fast, schema-light, first-class SSE |
-| DB         | SQLite via better-sqlite3 | single-file, zero-ops, perfect for self-host |
+| DB         | SQLite via Node.js `node:sqlite` | single-file, zero-ops, no native addon install |
 | Providers  | OpenAI-compatible HTTP, Anthropic Messages, Google Gemini, Mock | covers ~95% of the market incl. local runtimes (Ollama, LM Studio, vLLM) |
 | Validation | zod at every trust boundary | API + config + env share one grammar |
 | Styling    | hand-rolled CSS custom properties | no framework tax, full theming control |

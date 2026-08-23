@@ -106,11 +106,10 @@ __export(connection_exports, {
   migrate: () => migrate,
   openDatabase: () => openDatabase
 });
-import Database from "better-sqlite3";
 function openDatabase(config) {
-  const db = new Database(config.databasePath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  const db = new DatabaseSync(config.databasePath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
 function migrate(db) {
@@ -120,17 +119,23 @@ function migrate(db) {
   );
   for (const m of MIGRATIONS) {
     if (applied.has(m.version)) continue;
-    const tx = db.transaction(() => {
+    db.exec("BEGIN");
+    try {
       db.exec(m.sql);
       db.prepare("INSERT INTO schema_migrations (version, name) VALUES (?, ?)").run(m.version, m.name);
-    });
-    tx();
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }
-var MIGRATIONS;
+var getBuiltinModule, DatabaseSync, MIGRATIONS;
 var init_connection = __esm({
   "apps/server/src/db/connection.ts"() {
     "use strict";
+    getBuiltinModule = process.getBuiltinModule;
+    ({ DatabaseSync } = getBuiltinModule("node:sqlite"));
     MIGRATIONS = [
       {
         version: 1,

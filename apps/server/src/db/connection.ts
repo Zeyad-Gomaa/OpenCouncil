@@ -1,13 +1,34 @@
 /** SQLite connection + embedded migrations. */
-import Database from 'better-sqlite3'
 import type { AppConfig } from '../config.js'
 
-export type DB = Database.Database
+interface StatementResultingChanges {
+  changes: number | bigint
+  lastInsertRowid: number | bigint
+}
+
+interface StatementSync {
+  all(...anonymousParameters: unknown[]): unknown[]
+  get(...anonymousParameters: unknown[]): unknown
+  run(...anonymousParameters: unknown[]): StatementResultingChanges
+}
+
+export interface DB {
+  close(): void
+  exec(sql: string): void
+  prepare(sql: string): StatementSync
+}
+
+const getBuiltinModule = (
+  process as typeof process & { getBuiltinModule(id: string): unknown }
+).getBuiltinModule
+const { DatabaseSync } = getBuiltinModule('node:sqlite') as {
+  DatabaseSync: new (location: string) => DB
+}
 
 export function openDatabase(config: AppConfig): DB {
-  const db = new Database(config.databasePath)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+  const db = new DatabaseSync(config.databasePath)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA foreign_keys = ON')
   return db
 }
 
@@ -134,10 +155,14 @@ export function migrate(db: DB): void {
   )
   for (const m of MIGRATIONS) {
     if (applied.has(m.version)) continue
-    const tx = db.transaction(() => {
+    db.exec('BEGIN')
+    try {
       db.exec(m.sql)
       db.prepare('INSERT INTO schema_migrations (version, name) VALUES (?, ?)').run(m.version, m.name)
-    })
-    tx()
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
   }
 }
