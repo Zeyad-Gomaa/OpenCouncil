@@ -7,6 +7,7 @@
 import path from 'node:path'
 import { createReadStream, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import fastifyStatic from '@fastify/static'
 
 interface Args {
   host: string
@@ -162,7 +163,12 @@ export async function main(): Promise<void> {
       if (existsSync(candidate) && !path.relative(webOutDir, candidate).startsWith('..')) {
         reply.type('text/html; charset=utf-8').send(createReadStream(candidate))
       } else {
-        reply.sendFile('404.html')
+        const fallback = path.join(webOutDir, '404.html')
+        if (existsSync(fallback)) {
+          reply.status(404).type('text/html; charset=utf-8').send(createReadStream(fallback))
+        } else {
+          reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
+        }
       }
     })
     uiReady = true

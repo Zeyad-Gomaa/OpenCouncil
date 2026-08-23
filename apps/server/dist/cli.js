@@ -1893,7 +1893,12 @@ async function main() {
       if (existsSync(candidate) && !path2.relative(webOutDir, candidate).startsWith("..")) {
         reply.type("text/html; charset=utf-8").send(createReadStream(candidate));
       } else {
-        reply.sendFile("404.html");
+        const fallback = path2.join(webOutDir, "404.html");
+        if (existsSync(fallback)) {
+          reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
+        } else {
+          reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
+        }
       }
     });
     uiReady = true;
