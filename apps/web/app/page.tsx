@@ -28,7 +28,7 @@ export default function ConvenePage() {
     setError(null)
     try {
       const session = await apiSend<{ id: string }>('/sessions', 'POST', { councilId, topic: topic.trim() })
-      router.push(`/sessions/${session.id}`)
+      router.push(`/sessions/view/?id=${session.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)

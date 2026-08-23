@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { apiGet, apiSend } from '../../lib/api'
 import type { CouncilEvent, MemberLiveStatus, MessageDTO, SessionDTO } from '@opencouncil/shared'
 
@@ -26,8 +26,16 @@ const STATUS_LABEL: Record<MemberLiveStatus, string> = {
 }
 
 export default function ChamberPage() {
-  const params = useParams<{ id: string }>()
-  const sessionId = params.id
+  return (
+    <Suspense fallback={<p className="subtitle">Opening the chamber…</p>}>
+      <ChamberContent />
+    </Suspense>
+  )
+}
+
+function ChamberContent() {
+  const searchParams = useSearchParams()
+  const sessionId = searchParams.get('id')
 
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [messages, setMessages] = useState<MessageDTO[]>([])
@@ -41,6 +49,10 @@ export default function ChamberPage() {
   }, [])
 
   useEffect(() => {
+    if (!sessionId) {
+      setError('No session id in URL — open a chamber via /sessions/view/?id=<sessionId>')
+      return
+    }
     let es: EventSource | null = null
     let cancelled = false
 

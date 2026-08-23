@@ -5,6 +5,7 @@
  * root, whether from a source checkout or a global/git npm install.
  */
 import path from 'node:path'
+import { createReadStream, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 interface Args {
@@ -88,7 +89,7 @@ export async function main(): Promise<void> {
 
   const here = path.dirname(fileURLToPath(import.meta.url)) // apps/server/dist
   const packageRoot = path.resolve(here, '..', '..', '..')
-  const webDir = path.join(packageRoot, 'apps', 'web')
+  const webOutDir = path.join(packageRoot, 'apps', 'web', 'out')
 
   // Config: env-first, CLI overrides layered on top.
   process.env.HOST = args.host
@@ -135,34 +136,41 @@ export async function main(): Promise<void> {
 
   const app = await buildApp({ config, db, bus, sessions })
 
-  // ---- Chamber UI (Next.js, programmatic, proxied under the same port) ----
+  // ---- Chamber UI: prebuilt static export served by this process ----
   let uiReady = false
-  try {
-    const nextModule = (await import('next')) as unknown as {
-      default?: (opts: Record<string, unknown>) => PromiseLike<unknown>
-    } & ((opts: Record<string, unknown>) => PromiseLike<unknown>)
-    const nextFactory = (nextModule.default ?? nextModule) as (opts: Record<string, unknown>) => PromiseLike<unknown>
-    const nextApp = (await nextFactory({ dev: false, dir: webDir })) as {
-      prepare(): PromiseLike<void>
-      getRequestHandler(): (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>
-    }
-    await nextApp.prepare()
-    const handleNext = nextApp.getRequestHandler()
+  if (existsSync(webOutDir)) {
+    const staticHandler = (await import('@fastify/static')).default
+    await app.register(staticHandler, {
+      root: webOutDir,
+      prefix: '/',
+      wildcard: false,
+      index: 'index.html',
+    })
+    // Directory-style URLs (/sessions/view/) resolve to their index.html.
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/') || req.url === '/api') {
         reply.status(404).send({ error: { code: 'not_found', message: 'no such API route' } })
         return
       }
-      void reply.hijack()
-      void handleNext(req.raw, reply.raw)
+      const urlPath = decodeURIComponent(req.url.split('?')[0]!)
+      if (!urlPath.endsWith('/')) {
+        // /sessions/view → /sessions/view/
+        reply.redirect(301, `${urlPath}/`)
+        return
+      }
+      const candidate = path.join(webOutDir, urlPath, 'index.html')
+      if (existsSync(candidate) && !path.relative(webOutDir, candidate).startsWith('..')) {
+        reply.type('text/html; charset=utf-8').send(createReadStream(candidate))
+      } else {
+        reply.sendFile('404.html')
+      }
     })
     uiReady = true
-  } catch (err) {
+  } else {
     console.warn(
-      `[opencouncil] UI unavailable (${err instanceof Error ? err.message : err}). ` +
-        `Build it with \`npm run build\` at the repo root. API remains served.`,
+      `[opencouncil] UI not found at ${webOutDir}. ` +
+        `Build it with \`npm run build\`. API remains served.`,
     )
-    // No UI to delegate to: plain JSON 404s.
     app.setNotFoundHandler((_req, reply) => {
       reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
     })

@@ -42,7 +42,7 @@ export default function SessionsPage() {
             {sessions.map((s) => (
               <tr key={s.id}>
                 <td>
-                  <Link href={`/sessions/${s.id}`}>{s.topic.slice(0, 80)}{s.topic.length > 80 ? '…' : ''}</Link>
+                  <Link href={`/sessions/view/?id=${s.id}`}>{s.topic.slice(0, 80)}{s.topic.length > 80 ? '…' : ''}</Link>
                 </td>
                 <td>{s.councilName}</td>
                 <td><span className={`badge ${s.status}`}>{s.status}</span></td>
