@@ -48,7 +48,7 @@
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
     "serve:api": "node apps/server/dist/index.js",
-    "prepare": "node -e \"const fs=require('fs');if(!fs.existsSync('apps/server/dist/cli.js')){console.log('[opencouncil] building…');require('child_process').execSync('npm run build',{stdio:'inherit'})}else{console.log('[opencouncil] prebuilt artifacts present — skipping build')}\""
+    "prepare": "node scripts/prepare.js"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
