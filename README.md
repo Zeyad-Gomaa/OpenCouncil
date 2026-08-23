@@ -32,7 +32,7 @@ npm install -g github:Zeyad-Gomaa/OpenCouncil
 opencouncil
 ```
 
-The postinstall step compiles everything; `opencouncil` then serves API + UI on one port (default 4311).
+The GitHub package includes the production server and static UI artifacts, so installation does not compile the app. `opencouncil` serves the API + UI on one port (default 4311).
 
 **Run without installing globally:**
 

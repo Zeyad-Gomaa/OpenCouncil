@@ -90,7 +90,11 @@ export async function main(): Promise<void> {
 
   const here = path.dirname(fileURLToPath(import.meta.url)) // apps/server/dist
   const packageRoot = path.resolve(here, '..', '..', '..')
-  const webOutDir = path.join(packageRoot, 'apps', 'web', 'out')
+  // The packaged CLI carries the static export beside the server bundle.
+  // Keep a source-checkout fallback for development.
+  const packagedWebDir = path.join(here, 'public')
+  const sourceWebDir = path.join(packageRoot, 'apps', 'web', 'out')
+  const webOutDir = existsSync(packagedWebDir) ? packagedWebDir : sourceWebDir
 
   // Config: env-first, CLI overrides layered on top.
   process.env.HOST = args.host

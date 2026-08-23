@@ -1832,7 +1832,9 @@ async function main() {
   }
   const here = path2.dirname(fileURLToPath(import.meta.url));
   const packageRoot = path2.resolve(here, "..", "..", "..");
-  const webOutDir = path2.join(packageRoot, "apps", "web", "out");
+  const packagedWebDir = path2.join(here, "public");
+  const sourceWebDir = path2.join(packageRoot, "apps", "web", "out");
+  const webOutDir = existsSync(packagedWebDir) ? packagedWebDir : sourceWebDir;
   process.env.HOST = args.host;
   process.env.PORT = String(args.port);
   if (args.databasePath) process.env.DATABASE_PATH = args.databasePath;

@@ -27,8 +27,6 @@
     "bin/",
     "apps/server/dist/",
     "apps/server/package.json",
-    "apps/web/out/",
-    "apps/web/next.config.js",
     "docs/",
     "README.md",
     "LICENSE",
@@ -41,14 +39,13 @@
     "build": "npm run build:shared && npm run build:server && npm run build:web",
     "build:shared": "tsc -p packages/shared",
     "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node20 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
-    "build:web": "next build apps/web",
+    "build:web": "next build apps/web && node scripts/copy-web.js",
     "dev": "npm run build && concurrently -n council,web-dev -c green,cyan \"node apps/server/dist/cli.js\" \"next dev -p 3000 apps/web\"",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
-    "serve:api": "node apps/server/dist/index.js",
-    "prepare": "node scripts/prepare.js"
+    "serve:api": "node apps/server/dist/index.js"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
