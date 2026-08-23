@@ -21,8 +21,7 @@ export default function SessionsPage() {
 
   return (
     <div>
-      <h1>Sessions</h1>
-      <p className="subtitle">Every deliberation ever convened, most recent first.</p>
+      <div className="page-header"><div><p className="eyebrow">Operations</p><h1>Sessions</h1><p className="subtitle">Every deliberation, most recent first.</p></div><Link className="btn primary" href="/">+ New session</Link></div>
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <div className="card">
         <table>
@@ -37,7 +36,7 @@ export default function SessionsPage() {
           </thead>
           <tbody>
             {sessions.length === 0 && (
-              <tr><td colSpan={5} style={{ color: 'var(--text-faint)' }}>No sessions yet. Convene your first council.</td></tr>
+              <tr><td colSpan={5} className="empty">No sessions yet. Convene your first council.</td></tr>
             )}
             {sessions.map((s) => (
               <tr key={s.id}>

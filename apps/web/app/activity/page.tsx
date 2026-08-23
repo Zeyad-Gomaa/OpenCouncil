@@ -39,8 +39,7 @@ export default function ActivityPage() {
 
   return (
     <div>
-      <h1>Activity</h1>
-      <p className="subtitle">Usage across the last 30 days — every token metered, every action logged.</p>
+      <div className="page-header"><div><p className="eyebrow">Observability</p><h1>Usage & activity</h1><p className="subtitle">Usage across the last 30 days — every token metered, every action logged.</p></div></div>
 
       <div className="stat-row">
         <Stat label="Sessions" value={String(stats.totals.sessions)} />

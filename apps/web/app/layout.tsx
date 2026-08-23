@@ -3,8 +3,8 @@ import Nav from './components/Nav'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'OpenCouncil',
-  description: 'Convene your LLMs as a council.',
+  title: 'OpenCouncil | Deliberation workspace',
+  description: 'Structured, private deliberation across your configured models.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

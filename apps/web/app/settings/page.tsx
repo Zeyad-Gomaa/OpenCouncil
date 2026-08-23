@@ -17,10 +17,9 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1>Settings</h1>
-      <p className="subtitle">Your keys, your models, your orchestration.</p>
+      <div className="page-header"><div><p className="eyebrow">Administration</p><h1>Configuration</h1><p className="subtitle">Manage providers, models, members, and council protocols.</p></div></div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+      <div className="tabs">
         {(['providers', 'models', 'members', 'councils'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'primary' : ''} onClick={() => setTab(t)}>
             {t[0]!.toUpperCase() + t.slice(1)}

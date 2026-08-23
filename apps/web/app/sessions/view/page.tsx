@@ -159,8 +159,8 @@ function ChamberContent() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-        <h1 style={{ flex: 1 }}>The Chamber</h1>
+      <div className="page-header">
+        <div><p className="eyebrow">Live session</p><h1 style={{ flex: 1 }}>Deliberation</h1></div>
         {running && (
           <button className="danger" onClick={cancel}>Cancel session</button>
         )}
