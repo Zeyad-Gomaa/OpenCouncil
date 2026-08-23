@@ -2,12 +2,6 @@
 node_modules/
 .pnp/
 
-# builds
-dist/
-.next/
-out/
-*.tsbuildinfo
-
 # runtime data
 data/
 *.db
