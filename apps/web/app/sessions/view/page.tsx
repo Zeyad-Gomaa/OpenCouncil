@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { apiGet, apiSend } from '../../lib/api'
 import type { CouncilEvent, MemberLiveStatus, MessageDTO, SessionDTO } from '@opencouncil/shared'
 
@@ -36,6 +36,7 @@ export default function ChamberPage() {
 }
 
 function ChamberContent() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const sessionId = searchParams.get('id')
 
@@ -45,7 +46,9 @@ function ChamberContent() {
   const [memberNames, setMemberNames] = useState<Record<string, string>>({})
   const [memberColors, setMemberColors] = useState<Record<string, string>>({})
   const [liveUsage, setLiveUsage] = useState<LiveUsage>({ calls: 0, tokens: 0, costUsd: 0 })
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [actionBusy, setActionBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const mergeMessage = useCallback((m: MessageDTO) => {
@@ -124,6 +127,12 @@ function ChamberContent() {
             case 'member.failed':
               setMemberStatus((st) => ({ ...st, [event.memberId]: 'failed' }))
               break
+            case 'session.extended':
+              setActionNotice(`Debate extended by +${event.additionalRounds} round(s) (Total: ${event.totalRounds})`)
+              break
+            case 'session.concluding':
+              setActionNotice('Council is wrapping up deliberation and synthesizing consensus…')
+              break
             case 'usage.recorded':
               setLiveUsage((current) => ({
                 calls: current.calls + 1,
@@ -136,13 +145,16 @@ function ChamberContent() {
               break
             case 'session.completed':
               setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'completed' } })
+              setActionNotice(null)
               break
             case 'session.failed':
               setError(event.error)
               setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'failed' } })
+              setActionNotice(null)
               break
             case 'session.cancelled':
               setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'cancelled' } })
+              setActionNotice(null)
               break
           }
         }
@@ -162,11 +174,49 @@ function ChamberContent() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages.length])
 
-  async function cancel() {
+  async function handleCancel() {
     try {
+      setActionBusy(true)
       await apiSend(`/sessions/${sessionId}/cancel`, 'POST')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleExtend(additionalRounds: number) {
+    try {
+      setActionBusy(true)
+      await apiSend(`/sessions/${sessionId}/extend`, 'POST', { additionalRounds })
+      setActionNotice(`Requested +${additionalRounds} additional debate round(s)`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleConclude() {
+    try {
+      setActionBusy(true)
+      await apiSend(`/sessions/${sessionId}/conclude`, 'POST', { reason: 'User requested early synthesis' })
+      setActionNotice('Concluding deliberation — moderator is synthesizing…')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleRerun() {
+    try {
+      setActionBusy(true)
+      const res = await apiSend<{ id: string }>(`/sessions/${sessionId}/rerun`, 'POST')
+      router.push(`/sessions/view/?id=${res.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setActionBusy(false)
     }
   }
 
@@ -175,6 +225,7 @@ function ChamberContent() {
   const discussion = messages.filter((m) => m.kind !== 'synthesis')
   const running = session?.status === 'running' || session?.status === 'queued'
   const rounds = [...new Set(discussion.map((m) => m.round))].sort((a, b) => a - b)
+  const currentRound = rounds.length > 0 ? Math.max(...rounds) : 0
 
   if (!session) {
     return (
@@ -190,7 +241,9 @@ function ChamberContent() {
       {/* Header */}
       <div className="chamber-header">
         <div>
-          <p className="eyebrow">Live session</p>
+          <p className="eyebrow">
+            Live Deliberation {running && currentRound > 0 ? `· Round ${currentRound}` : ''}
+          </p>
           <h1 style={{ margin: 0 }}>{session.councilName || 'Deliberation'}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
             <span className={`badge ${session.status}`}>{session.status}</span>
@@ -201,12 +254,66 @@ function ChamberContent() {
             )}
           </div>
         </div>
-        {running && (
-          <button className="danger" onClick={cancel}>
-            Cancel
-          </button>
-        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {running ? (
+            <>
+              <button
+                className="sm primary"
+                onClick={handleConclude}
+                disabled={actionBusy}
+                title="Finish debate and generate moderator consensus"
+              >
+                ⚖ End & Synthesize
+              </button>
+              <button
+                className="sm"
+                onClick={() => handleExtend(1)}
+                disabled={actionBusy}
+                title="Add 1 more round to debate"
+              >
+                +1 Round
+              </button>
+              <button
+                className="sm"
+                onClick={() => handleExtend(3)}
+                disabled={actionBusy}
+                title="Add 3 more rounds to debate"
+              >
+                +3 Rounds
+              </button>
+              <button className="sm danger" onClick={handleCancel} disabled={actionBusy}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="sm" onClick={handleRerun} disabled={actionBusy}>
+                ↻ Re-run
+              </button>
+              <Link className="btn sm primary" href={`/?topic=${encodeURIComponent(session.topic)}`}>
+                ✎ Edit & Convene
+              </Link>
+            </>
+          )}
+        </div>
       </div>
+
+      {actionNotice && (
+        <div
+          style={{
+            padding: '8px 14px',
+            background: 'var(--accent-glow)',
+            border: '1px solid var(--border-accent)',
+            borderRadius: 'var(--radius)',
+            fontSize: '0.82rem',
+            color: 'var(--accent-bright)',
+            marginTop: 10,
+          }}
+        >
+          ✦ {actionNotice}
+        </div>
+      )}
 
       {error && <p style={{ color: 'var(--danger)', marginTop: 8 }}>Error: {error}</p>}
 

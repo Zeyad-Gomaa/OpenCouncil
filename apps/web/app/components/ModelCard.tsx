@@ -6,6 +6,7 @@ interface ModelCardProps {
   model: ModelDTO
   providerName?: string
   onDelete: (id: string) => void
+  onEdit?: (model: ModelDTO) => void
 }
 
 function formatContext(n: number | null): string {
@@ -21,7 +22,7 @@ function formatPrice(n: number | null | undefined): string {
   return `$${n.toFixed(2)}`
 }
 
-export default function ModelCard({ model, providerName, onDelete }: ModelCardProps) {
+export default function ModelCard({ model, providerName, onDelete, onEdit }: ModelCardProps) {
   const maxContext = 200_000
   const contextPct = model.contextWindow ? Math.min((model.contextWindow / maxContext) * 100, 100) : 0
 
@@ -34,6 +35,16 @@ export default function ModelCard({ model, providerName, onDelete }: ModelCardPr
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {providerName && <span className="protocol-badge">{providerName}</span>}
+          {onEdit && (
+            <button
+              className="ghost sm"
+              onClick={() => onEdit(model)}
+              title="Edit model"
+              style={{ padding: '4px 6px', minHeight: 'unset' }}
+            >
+              ✎
+            </button>
+          )}
           <button
             className="ghost sm"
             onClick={() => onDelete(model.id)}

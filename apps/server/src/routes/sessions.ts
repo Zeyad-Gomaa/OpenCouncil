@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { AppError } from '../lib/errors.js'
-import { sessionCreateSchema } from '@opencouncil/shared'
+import { sessionConcludeSchema, sessionCreateSchema, sessionExtendSchema } from '@opencouncil/shared'
 import type { SessionBus } from '../engine/bus.js'
 import type { SessionManager } from '../engine/session-manager.js'
 import { logActivity, messageToDTO, sessionToDTO } from './mappers.js'
@@ -148,6 +148,28 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         "UPDATE sessions SET status='cancelled', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
       ).run(id)
     }
+    return { ok: true }
+  })
+
+  app.post('/api/v1/sessions/:id/extend', async (req) => {
+    const { id } = req.params as { id: string }
+    const row = db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as never | undefined
+    if (!row) throw new AppError(404, 'not_found', 'session not found')
+    const body = sessionExtendSchema.parse(req.body ?? {})
+    const ok = sessions.extendSession(id, body.additionalRounds)
+    if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
+    logActivity(db, 'session.extended', { sessionId: id, additionalRounds: body.additionalRounds })
+    return { ok: true, extendedRounds: body.additionalRounds }
+  })
+
+  app.post('/api/v1/sessions/:id/conclude', async (req) => {
+    const { id } = req.params as { id: string }
+    const row = db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as never | undefined
+    if (!row) throw new AppError(404, 'not_found', 'session not found')
+    const body = sessionConcludeSchema.parse(req.body ?? {})
+    const ok = sessions.concludeSession(id, body.reason)
+    if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
+    logActivity(db, 'session.concluding', { sessionId: id, reason: body.reason })
     return { ok: true }
   })
 

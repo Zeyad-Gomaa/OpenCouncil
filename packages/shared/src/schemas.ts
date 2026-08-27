@@ -55,8 +55,8 @@ export const councilCreateSchema = z
     name: z.string().min(1).max(80),
     description: z.string().max(500).nullish(),
     strategy: strategyKindSchema,
-    rounds: z.number().int().min(1).max(10),
-    memberIds: z.array(z.string().uuid()).min(1).max(12),
+    rounds: z.number().int().min(1).max(100),
+    memberIds: z.array(z.string().uuid()).min(1).max(24),
     moderatorMemberId: z.string().uuid().nullish(),
   })
   .refine((c) => !c.moderatorMemberId || c.memberIds.includes(c.moderatorMemberId), {
@@ -68,8 +68,8 @@ export const councilUpdateSchema = z
     name: z.string().min(1).max(80).optional(),
     description: z.string().max(500).nullable().optional(),
     strategy: strategyKindSchema.optional(),
-    rounds: z.number().int().min(1).max(10).optional(),
-    memberIds: z.array(z.string().uuid()).min(1).max(12).optional(),
+    rounds: z.number().int().min(1).max(100).optional(),
+    memberIds: z.array(z.string().uuid()).min(1).max(24).optional(),
     moderatorMemberId: z.string().uuid().nullable().optional(),
   })
   .refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
@@ -79,6 +79,14 @@ export const councilUpdateSchema = z
 export const sessionCreateSchema = z.object({
   councilId: z.string().uuid(),
   topic: z.string().min(1).max(8_000),
+})
+
+export const sessionExtendSchema = z.object({
+  additionalRounds: z.number().int().min(1).max(50).default(1),
+})
+
+export const sessionConcludeSchema = z.object({
+  reason: z.string().max(500).optional(),
 })
 
 /** Shape of `GET /config/export`, re-validated on import.
@@ -132,8 +140,8 @@ export const configImportSchema = z.object({
       name: z.string().min(1).max(80),
       description: z.string().max(500).nullish(),
       strategy: strategyKindSchema.optional(),
-      rounds: z.number().int().min(1).max(10).optional(),
-      memberIds: z.array(z.string().uuid()).max(12).optional(),
+      rounds: z.number().int().min(1).max(100).optional(),
+      memberIds: z.array(z.string().uuid()).max(24).optional(),
       moderatorMemberId: z.string().uuid().nullish(),
     }),
   ),

@@ -1,10 +1,41 @@
-/** Session lifecycle manager: create, run async, cancel, track aborts. */
+/** Session lifecycle manager: create, run async, cancel, extend, conclude, track aborts. */
 import { randomUUID } from 'node:crypto'
 import type { SessionBus } from './bus.js'
-import { SessionCancelled, type SessionRunner } from './runner.js'
+import { SessionCancelled, type SessionController, type SessionRunner } from './runner.js'
+
+class ActiveSessionController implements SessionController {
+  public readonly abortController = new AbortController()
+  private additionalRounds = 0
+  private concludeEarly = false
+
+  get signal(): AbortSignal {
+    return this.abortController.signal
+  }
+
+  shouldConcludeEarly(): boolean {
+    return this.concludeEarly
+  }
+
+  getAdditionalRounds(): number {
+    return this.additionalRounds
+  }
+
+  extend(rounds: number): number {
+    this.additionalRounds += Math.max(1, rounds)
+    return this.additionalRounds
+  }
+
+  conclude(): void {
+    this.concludeEarly = true
+  }
+
+  abort(): void {
+    this.abortController.abort()
+  }
+}
 
 export class SessionManager {
-  private aborts = new Map<string, AbortController>()
+  private controllers = new Map<string, ActiveSessionController>()
   private pending: Array<{ sessionId: string; councilId: string; topic: string }> = []
   private active = 0
 
@@ -24,15 +55,15 @@ export class SessionManager {
   }
 
   private runSession(sessionId: string, councilId: string, topic: string): void {
-    const ac = new AbortController()
-    this.aborts.set(sessionId, ac)
+    const controller = new ActiveSessionController()
+    this.controllers.set(sessionId, controller)
     this.active++
 
     const runner = this.runner
 
     void (async () => {
       try {
-        await runner.run(sessionId, councilId, topic, ac.signal)
+        await runner.run(sessionId, councilId, topic, controller)
         // terminal events (completed/failed/cancelled) already published by runner
       } catch (err) {
         // Runner owns persistence and terminal lifecycle events. The manager only
@@ -41,7 +72,7 @@ export class SessionManager {
       } finally {
         // Give SSE subscribers a moment to receive final events before GC.
         setTimeout(() => this.bus.closeSession(sessionId), 30_000)
-        this.aborts.delete(sessionId)
+        this.controllers.delete(sessionId)
         this.active--
         const next = this.pending.shift()
         if (next) this.runSession(next.sessionId, next.councilId, next.topic)
@@ -55,14 +86,28 @@ export class SessionManager {
       this.pending.splice(pendingIndex, 1)
       return false
     }
-    const ac = this.aborts.get(sessionId)
-    if (!ac) return false
-    ac.abort()
+    const ctrl = this.controllers.get(sessionId)
+    if (!ctrl) return false
+    ctrl.abort()
+    return true
+  }
+
+  extendSession(sessionId: string, additionalRounds: number): boolean {
+    const ctrl = this.controllers.get(sessionId)
+    if (!ctrl) return false
+    ctrl.extend(additionalRounds)
+    return true
+  }
+
+  concludeSession(sessionId: string, _reason?: string): boolean {
+    const ctrl = this.controllers.get(sessionId)
+    if (!ctrl) return false
+    ctrl.conclude()
     return true
   }
 
   isRunning(sessionId: string): boolean {
-    return this.aborts.has(sessionId)
+    return this.controllers.has(sessionId)
   }
 }
 

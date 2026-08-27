@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { apiGet, apiSend } from './lib/api'
 import type { CouncilDTO, SessionDTO } from '@opencouncil/shared'
@@ -18,11 +18,29 @@ function timeAgo(iso: string): string {
 }
 
 export default function HomePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="chat-hero">
+          <div className="skeleton" style={{ width: 200, height: 32, marginBottom: 12 }} />
+          <div className="skeleton" style={{ width: 340, height: 18 }} />
+        </div>
+      }
+    >
+      <HomeContent />
+    </Suspense>
+  )
+}
+
+function HomeContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialTopic = searchParams.get('topic') ?? ''
+
   const [councils, setCouncils] = useState<CouncilDTO[]>([])
   const [sessions, setSessions] = useState<SessionDTO[]>([])
   const [councilId, setCouncilId] = useState('')
-  const [topic, setTopic] = useState('')
+  const [topic, setTopic] = useState(initialTopic)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -38,6 +56,10 @@ export default function HomePage() {
       setLoaded(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (initialTopic) setTopic(initialTopic)
+  }, [initialTopic])
 
   async function convene() {
     if (!councilId || !topic.trim() || busy) return
@@ -149,7 +171,7 @@ export default function HomePage() {
           </>
         )}
 
-        {error && <p style={{ color: 'var(--danger)', marginTop: 12, fontSize: '0.85rem' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
       </div>
 
       {sessions.length > 0 && (

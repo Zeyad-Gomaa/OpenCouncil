@@ -12,6 +12,8 @@ export type CouncilEvent =
   | { type: 'round.completed'; sessionId: string; round: number }
   | { type: 'moderator.started'; sessionId: string }
   | { type: 'synthesis.completed'; sessionId: string; message: MessageDTO }
+  | { type: 'session.extended'; sessionId: string; additionalRounds: number; totalRounds: number }
+  | { type: 'session.concluding'; sessionId: string; reason?: string }
   | { type: 'session.completed'; sessionId: string }
   | { type: 'session.failed'; sessionId: string; error: string }
   | { type: 'session.cancelled'; sessionId: string }

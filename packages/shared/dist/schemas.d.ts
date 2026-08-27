@@ -226,6 +226,20 @@ export declare const sessionCreateSchema: z.ZodObject<{
     councilId: string;
     topic: string;
 }>;
+export declare const sessionExtendSchema: z.ZodObject<{
+    additionalRounds: z.ZodDefault<z.ZodNumber>;
+}, "strip", z.ZodTypeAny, {
+    additionalRounds: number;
+}, {
+    additionalRounds?: number | undefined;
+}>;
+export declare const sessionConcludeSchema: z.ZodObject<{
+    reason: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    reason?: string | undefined;
+}, {
+    reason?: string | undefined;
+}>;
 /** Shape of `GET /config/export`, re-validated on import.
  *
  * Distinct from the create schemas because these rows carry their own ids: an

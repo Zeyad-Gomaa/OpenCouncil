@@ -24,4 +24,20 @@ describe('strategies', () => {
     expect(getStrategy('debate')).toBe(DEBATE)
     expect(getStrategy('round_robin')).toBe(ROUND_ROBIN)
   })
+
+  it('formatTranscriptForMember distinguishes own previous messages from peers', async () => {
+    const { formatTranscriptForMember } = await import('../engine/runner.js')
+    const transcript = [
+      { speaker: 'Visionary', memberId: 'm1', round: 1, content: 'We should dream big.' },
+      { speaker: 'Pragmatist', memberId: 'm2', round: 1, content: 'We must ground it in reality.' },
+    ]
+    const formattedForPragmatist = formatTranscriptForMember(transcript, 'm2', 'Pragmatist')
+    expect(formattedForPragmatist).toContain('[@Visionary in Round 1]:')
+    expect(formattedForPragmatist).toContain('[YOU (@Pragmatist) in Round 1]:')
+    expect(formattedForPragmatist).not.toContain('[@Pragmatist in Round 1]:')
+
+    const formattedForVisionary = formatTranscriptForMember(transcript, 'm1', 'Visionary')
+    expect(formattedForVisionary).toContain('[YOU (@Visionary) in Round 1]:')
+    expect(formattedForVisionary).toContain('[@Pragmatist in Round 1]:')
+  })
 })

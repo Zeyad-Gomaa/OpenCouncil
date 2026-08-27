@@ -46,6 +46,15 @@ export type CouncilEvent = {
     sessionId: string;
     message: MessageDTO;
 } | {
+    type: 'session.extended';
+    sessionId: string;
+    additionalRounds: number;
+    totalRounds: number;
+} | {
+    type: 'session.concluding';
+    sessionId: string;
+    reason?: string;
+} | {
     type: 'session.completed';
     sessionId: string;
 } | {

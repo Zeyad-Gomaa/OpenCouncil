@@ -1,6 +1,6 @@
 {
   "name": "opencouncil",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-hosted BYOK platform where multiple LLMs convene as a council to research, deliberate, and agree.",
   "license": "MIT",
   "author": "Zeyad Gomaa",

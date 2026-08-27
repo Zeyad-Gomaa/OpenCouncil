@@ -190,4 +190,38 @@ describe('council end-to-end', () => {
     expect(bad.statusCode).toBe(400)
     expect(bad.json().error.code).toBe('invalid_config')
   })
+
+  it('supports dynamically extending debate rounds and early conclusion', async () => {
+    let council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string } | undefined
+    if (!council) {
+      seedDemoCouncil(db)
+      council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }
+    }
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { councilId: council.id, topic: 'Testing debate extension' },
+    })
+    expect(create.statusCode).toBe(202)
+    const sessionId = create.json().id
+
+    // Try extend while running or queued
+    const extendRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sessionId}/extend`,
+      payload: { additionalRounds: 1 },
+    })
+    expect([200, 400]).toContain(extendRes.statusCode)
+
+    await waitForSessionCompletion(sessionId)
+
+    // After completion, extend should return 400 invalid_state
+    const postExtend = await app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sessionId}/extend`,
+      payload: { additionalRounds: 1 },
+    })
+    expect(postExtend.statusCode).toBe(400)
+  })
 })

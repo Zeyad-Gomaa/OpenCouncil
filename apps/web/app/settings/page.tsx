@@ -79,6 +79,7 @@ export default function SettingsPage() {
 
 function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload: () => void }) {
   const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
   const [name, setName] = useState('')
   const [protocol, setProtocol] = useState<ProviderProtocol>('openai_compatible')
@@ -93,26 +94,43 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
       .catch(() => {})
   }, [])
 
-  function resetForm() {
+  function openAdd() {
+    setEditId(null)
     setName('')
     setProtocol('openai_compatible')
     setBaseUrl('')
     setApiKey('')
     setError(null)
+    setOpen(true)
+  }
+
+  function openEdit(p: ProviderDTO) {
+    setEditId(p.id)
+    setName(p.name)
+    setProtocol(p.protocol)
+    setBaseUrl(p.baseUrl ?? '')
+    setApiKey('')
+    setError(null)
+    setOpen(true)
   }
 
   async function save() {
     setBusy(true)
     setError(null)
     try {
-      await apiSend('/providers', 'POST', {
+      const payload: Record<string, unknown> = {
         name,
         protocol,
-        baseUrl: baseUrl || undefined,
-        apiKey: apiKey || undefined,
-      })
+        baseUrl: baseUrl || null,
+      }
+      if (apiKey) payload.apiKey = apiKey
+
+      if (editId) {
+        await apiSend(`/providers/${editId}`, 'PATCH', payload)
+      } else {
+        await apiSend('/providers', 'POST', payload)
+      }
       setOpen(false)
-      resetForm()
       reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -139,7 +157,7 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Providers</h2>
-        <button className="primary" onClick={() => setOpen(true)}>
+        <button className="primary" onClick={openAdd}>
           + Add Provider
         </button>
       </div>
@@ -152,48 +170,55 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
       ) : (
         <div className="grid-auto">
           {providers.map((p) => (
-            <ProviderCard key={p.id} provider={p} onDelete={handleDelete} onTest={handleTest} />
+            <ProviderCard
+              key={p.id}
+              provider={p}
+              onDelete={handleDelete}
+              onTest={handleTest}
+              onEdit={openEdit}
+            />
           ))}
         </div>
       )}
 
       <Modal
         open={open}
-        onClose={() => {
-          setOpen(false)
-          resetForm()
-        }}
-        title="Add Provider"
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit Provider' : 'Add Provider'}
         actions={
           <>
             <button onClick={() => setOpen(false)}>Cancel</button>
             <button className="primary" onClick={save} disabled={busy || !name}>
-              {busy ? 'Adding…' : 'Add Provider'}
+              {busy ? 'Saving…' : editId ? 'Update' : 'Add Provider'}
             </button>
           </>
         }
       >
-        <label>Preset</label>
-        <select
-          onChange={(e) => {
-            const p = presets.find((x) => x.key === e.target.value)
-            if (p) {
-              setProtocol(p.protocol as ProviderProtocol)
-              setBaseUrl(p.baseUrl ?? '')
-              setName(p.key.charAt(0).toUpperCase() + p.key.slice(1))
-            }
-          }}
-          defaultValue=""
-        >
-          <option value="" disabled>
-            Choose a preset…
-          </option>
-          {presets.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.key}
-            </option>
-          ))}
-        </select>
+        {!editId && (
+          <>
+            <label>Preset</label>
+            <select
+              onChange={(e) => {
+                const p = presets.find((x) => x.key === e.target.value)
+                if (p) {
+                  setProtocol(p.protocol as ProviderProtocol)
+                  setBaseUrl(p.baseUrl ?? '')
+                  setName(p.key.charAt(0).toUpperCase() + p.key.slice(1))
+                }
+              }}
+              defaultValue=""
+            >
+              <option value="" disabled>
+                Choose a preset…
+              </option>
+              {presets.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.key}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
 
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="OpenAI" />
@@ -210,7 +235,7 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
         <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
         <div className="input-hint">Leave empty for protocol default</div>
 
-        <label>API Key</label>
+        <label>API Key {editId ? '(leave empty to keep current)' : ''}</label>
         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
         <div className="input-hint">Encrypted at rest with AES-256-GCM</div>
 
@@ -234,6 +259,7 @@ function ModelsTab({
   reload: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [providerId, setProviderId] = useState('')
   const [modelId, setModelId] = useState('')
@@ -250,29 +276,48 @@ function ModelsTab({
       m.modelId.toLowerCase().includes(search.toLowerCase()),
   )
 
-  function resetForm() {
+  function openAdd() {
+    setEditId(null)
+    if (providers.length > 0) setProviderId(providers[0]!.id)
     setModelId('')
     setDisplayName('')
     setCtx('128000')
     setInPrice('')
     setOutPrice('')
     setError(null)
+    setOpen(true)
+  }
+
+  function openEdit(m: ModelDTO) {
+    setEditId(m.id)
+    setProviderId(m.providerId)
+    setModelId(m.modelId)
+    setDisplayName(m.displayName)
+    setCtx(m.contextWindow ? String(m.contextWindow) : '')
+    setInPrice(m.inputPerMTokUsd != null ? String(m.inputPerMTokUsd) : '')
+    setOutPrice(m.outputPerMTokUsd != null ? String(m.outputPerMTokUsd) : '')
+    setError(null)
+    setOpen(true)
   }
 
   async function save() {
     setBusy(true)
     setError(null)
     try {
-      await apiSend('/models', 'POST', {
+      const payload = {
         providerId,
         modelId,
         displayName: displayName || modelId,
         contextWindow: ctx ? Number(ctx) : null,
         inputPerMTokUsd: inPrice ? Number(inPrice) : null,
         outputPerMTokUsd: outPrice ? Number(outPrice) : null,
-      })
+      }
+      if (editId) {
+        await apiSend(`/models/${editId}`, 'PATCH', payload)
+      } else {
+        await apiSend('/models', 'POST', payload)
+      }
       setOpen(false)
-      resetForm()
       reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -291,13 +336,7 @@ function ModelsTab({
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Model Catalog</h2>
-        <button
-          className="primary"
-          onClick={() => {
-            if (providers.length > 0 && !providerId) setProviderId(providers[0]!.id)
-            setOpen(true)
-          }}
-        >
+        <button className="primary" onClick={openAdd}>
           + Enroll Model
         </button>
       </div>
@@ -313,29 +352,34 @@ function ModelsTab({
         <div className="grid-auto">
           {filtered.map((m) => {
             const prov = providers.find((p) => p.id === m.providerId)
-            return <ModelCard key={m.id} model={m} providerName={prov?.name} onDelete={handleDelete} />
+            return (
+              <ModelCard
+                key={m.id}
+                model={m}
+                providerName={prov?.name}
+                onDelete={handleDelete}
+                onEdit={openEdit}
+              />
+            )
           })}
         </div>
       )}
 
       <Modal
         open={open}
-        onClose={() => {
-          setOpen(false)
-          resetForm()
-        }}
-        title="Enroll Model"
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit Model' : 'Enroll Model'}
         actions={
           <>
             <button onClick={() => setOpen(false)}>Cancel</button>
             <button className="primary" onClick={save} disabled={busy || !providerId || !modelId}>
-              {busy ? 'Enrolling…' : 'Enroll Model'}
+              {busy ? 'Saving…' : editId ? 'Update' : 'Enroll Model'}
             </button>
           </>
         }
       >
         <label>Provider</label>
-        <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+        <select value={providerId} onChange={(e) => setProviderId(e.target.value)} disabled={!!editId}>
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -557,8 +601,8 @@ function CouncilsTab({
   const [editId, setEditId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [strategy, setStrategy] = useState<StrategyKind>('round_robin')
-  const [rounds, setRounds] = useState(1)
+  const [strategy, setStrategy] = useState<StrategyKind>('debate')
+  const [rounds, setRounds] = useState(3)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [moderatorId, setModeratorId] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -568,8 +612,8 @@ function CouncilsTab({
     setEditId(null)
     setName('')
     setDescription('')
-    setStrategy('round_robin')
-    setRounds(1)
+    setStrategy('debate')
+    setRounds(3)
     setSelectedIds([])
     setModeratorId('')
     setError(null)
@@ -674,18 +718,18 @@ function CouncilsTab({
           <div>
             <label>Strategy</label>
             <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKind)}>
-              <option value="round_robin">↻ Round Robin</option>
-              <option value="debate">⚔ Debate</option>
+              <option value="debate">⚔ Debate (Chatroom roundtable)</option>
+              <option value="round_robin">↻ Round Robin (Parallel takes)</option>
             </select>
           </div>
           <div>
-            <label>Rounds</label>
+            <label>Rounds (1–100)</label>
             <input
               type="number"
               min="1"
-              max="10"
+              max="100"
               value={rounds}
-              onChange={(e) => setRounds(Number(e.target.value))}
+              onChange={(e) => setRounds(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
             />
           </div>
         </div>

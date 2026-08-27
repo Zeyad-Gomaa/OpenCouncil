@@ -10,6 +10,25 @@ import { buildSynthesisMessages } from './moderator.js'
 import { getStrategy } from './strategies.js'
 import type { SessionBus } from './bus.js'
 
+export interface TranscriptEntry {
+  speaker: string
+  memberId: string
+  round: number
+  content: string
+}
+
+export interface SessionController {
+  signal: AbortSignal
+  shouldConcludeEarly(): boolean
+  getAdditionalRounds(): number
+  extend(additionalRounds: number): number
+  conclude(reason?: string): void
+}
+
+export function isSessionController(c: unknown): c is SessionController {
+  return typeof c === 'object' && c !== null && 'shouldConcludeEarly' in c && 'signal' in c
+}
+
 export interface RunnerDeps {
   bus: SessionBus
   recordUsage(u: {
@@ -58,7 +77,11 @@ export interface RunnerDeps {
     inputPerMTokUsd: number | null
     outputPerMTokUsd: number | null
   } | null
-  updateSessionStatus(sessionId: string, status: 'running' | 'completed' | 'failed' | 'cancelled', error?: string): void
+  updateSessionStatus(
+    sessionId: string,
+    status: 'running' | 'completed' | 'failed' | 'cancelled',
+    error?: string,
+  ): void
 }
 
 const CALL_TIMEOUT_MS = 120_000
@@ -76,12 +99,47 @@ function computeCost(
   return Number((inCost + outCost).toFixed(6))
 }
 
+export function formatTranscriptForMember(
+  transcript: TranscriptEntry[],
+  currentMemberId: string,
+  currentMemberName: string,
+): string {
+  return transcript
+    .map((e) => {
+      const isSelf = e.memberId === currentMemberId
+      if (isSelf) {
+        return `[YOU (@${currentMemberName}) in Round ${e.round}]:\n${e.content}`
+      }
+      return `[@${e.speaker} in Round ${e.round}]:\n${e.content}`
+    })
+    .join('\n\n---\n\n')
+}
+
+export function renderTranscript(
+  t: (TranscriptEntry | { speaker: string; content: string; round?: number })[],
+): string {
+  return t
+    .map((e) => {
+      const r = 'round' in e && e.round ? ` (Round ${e.round})` : ''
+      return `@${e.speaker}${r}:\n${e.content}`
+    })
+    .join('\n\n')
+}
+
 export class SessionRunner {
   private providerLimits = new Map<string, Semaphore>()
   constructor(private deps: RunnerDeps) {}
 
-  async run(sessionId: string, councilId: string, topic: string, signal: AbortSignal): Promise<void> {
+  async run(
+    sessionId: string,
+    councilId: string,
+    topic: string,
+    signalOrController: AbortSignal | SessionController,
+  ): Promise<void> {
     const { bus } = this.deps
+    const controller = isSessionController(signalOrController) ? signalOrController : null
+    const signal = isSessionController(signalOrController) ? signalOrController.signal : signalOrController
+
     try {
       const council = this.deps.loadCouncil(councilId)
       if (!council) throw new Error('council not found')
@@ -119,40 +177,75 @@ export class SessionRunner {
       })
 
       const strategy = getStrategy(council.strategy)
-      const rounds = strategy.buildRounds({ rounds: council.rounds, memberIds: activeMembers.map((m) => m.id) })
-      /** Transcript entries for debate/synthesis context. */
-      const transcript: { speaker: string; content: string }[] = []
+      const transcript: TranscriptEntry[] = []
 
       let roundNum = 0
-      for (const round of rounds) {
+      let totalPlannedRounds = council.rounds
+
+      while (roundNum < totalPlannedRounds) {
         roundNum++
         if (signal.aborted) throw new Error('cancelled')
-        bus.publish({ type: 'round.started', sessionId, round: roundNum })
+        if (controller && controller.shouldConcludeEarly()) {
+          bus.publish({ type: 'session.concluding', sessionId, reason: 'concluded early' })
+          break
+        }
 
-        await Promise.all(
-          round.map(async (memberId) => {
+        bus.publish({ type: 'round.started', sessionId, round: roundNum })
+        const memberIds = activeMembers.map((m) => m.id)
+
+        if (council.strategy === 'debate') {
+          // In debate mode, run turns in conversational sequence so peers react to earlier speakers in this round
+          for (let i = 0; i < memberIds.length; i++) {
+            const memberId = memberIds[i]!
             const member = activeMembers.find((m) => m.id === memberId)
-            if (!member) return
+            if (!member) continue
+            if (signal.aborted) throw new Error('cancelled')
+            if (controller && controller.shouldConcludeEarly()) break
+
             await this.callMember(
               sessionId,
               member,
               topic,
               transcript,
               roundNum,
-              round.indexOf(memberId),
-              strategy.includeTranscript(roundNum),
+              i,
+              strategy.includeTranscript(roundNum) || transcript.length > 0,
               signal,
             )
-          }),
-        )
+          }
+        } else {
+          // Round-robin mode: run initial takes concurrently within the round
+          await Promise.all(
+            memberIds.map(async (memberId, i) => {
+              const member = activeMembers.find((m) => m.id === memberId)
+              if (!member) return
+              await this.callMember(
+                sessionId,
+                member,
+                topic,
+                transcript,
+                roundNum,
+                i,
+                strategy.includeTranscript(roundNum),
+                signal,
+              )
+            }),
+          )
+        }
+
         bus.publish({ type: 'round.completed', sessionId, round: roundNum })
+
+        // Check if additional rounds were dynamically requested
+        if (controller) {
+          totalPlannedRounds = council.rounds + controller.getAdditionalRounds()
+        }
       }
 
       // Moderator synthesis (optional).
       const moderator = council.moderatorMemberId
         ? activeMembers.find((m) => m.id === council.moderatorMemberId)
         : undefined
-      if (moderator) {
+      if (moderator && transcript.length > 0) {
         if (signal.aborted) throw new Error('cancelled')
         bus.publish({ type: 'moderator.started', sessionId })
         await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true)
@@ -178,7 +271,7 @@ export class SessionRunner {
     sessionId: string,
     member: MemberDTO,
     topic: string,
-    transcript: { speaker: string; content: string }[],
+    transcript: TranscriptEntry[],
     round: number,
     roundPosition: number,
     includeTranscript: boolean,
@@ -211,16 +304,31 @@ export class SessionRunner {
     if (isSynthesis) {
       messages.push(...buildSynthesisMessages(topic, renderTranscript(transcript)))
     } else {
-      if (member.systemPrompt) messages.push({ role: 'system', content: member.systemPrompt })
+      const systemPromptParts: string[] = []
+
+      systemPromptParts.push(
+        `You are @${member.name}, an expert participant in this AI council roundtable debate.\n` +
+          `DELIBERATION TOPIC:\n"${topic}"\n\n` +
+          (member.systemPrompt ? `YOUR ASSIGNED PERSONA & PERSPECTIVE:\n${member.systemPrompt}\n\n` : '') +
+          `CRITICAL IDENTITY & CHATROOM RULES:\n` +
+          `1. YOU ARE @${member.name}. NEVER refer to yourself in the third person. Do NOT say "I agree with @${member.name}" or "@${member.name} made a point".\n` +
+          `2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.\n` +
+          `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
+          `4. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
+      )
+
+      messages.push({ role: 'system', content: systemPromptParts.join('\n') })
+
       if (includeTranscript && transcript.length > 0) {
         messages.push({
           role: 'system',
           content:
-            `You are deliberating with other AI members of a council. Here is the transcript so far:\n\n` +
-            renderTranscript(transcript) +
-            `\n\nRespond to the others: rebut, concede, or refine. Be direct.`,
+            `=== COUNCIL DEBATE TRANSCRIPT SO FAR ===\n\n` +
+            formatTranscriptForMember(transcript, member.id, member.name) +
+            `\n\n=== END OF TRANSCRIPT ===\n\nNow respond for Round ${round}. Speak directly to your council peers and advance the deliberation.`,
         })
       }
+
       messages.push({ role: 'user', content: topic })
     }
 
@@ -358,7 +466,7 @@ export class SessionRunner {
         })
       }
 
-      transcript.push({ speaker: member.name, content: result.text })
+      transcript.push({ speaker: member.name, memberId: member.id, round, content: result.text })
     } catch (err) {
       const latency = Date.now() - started
       const msgText = err instanceof Error ? err.message : String(err)
@@ -447,10 +555,6 @@ export class SessionRunner {
       })
     }
   }
-}
-
-export function renderTranscript(t: { speaker: string; content: string }[]): string {
-  return t.map((e) => `${e.speaker}: ${e.content}`).join('\n\n')
 }
 
 export class SessionCancelled extends Error {}

@@ -499,8 +499,13 @@ var runner_exports = {};
 __export(runner_exports, {
   SessionCancelled: () => SessionCancelled,
   SessionRunner: () => SessionRunner,
+  formatTranscriptForMember: () => formatTranscriptForMember,
+  isSessionController: () => isSessionController,
   renderTranscript: () => renderTranscript
 });
+function isSessionController(c) {
+  return typeof c === "object" && c !== null && "shouldConcludeEarly" in c && "signal" in c;
+}
 function computeCost(promptTokens, completionTokens, inPrice, outPrice) {
   if (promptTokens == null || completionTokens == null) return null;
   if (inPrice == null && outPrice == null) return null;
@@ -508,8 +513,23 @@ function computeCost(promptTokens, completionTokens, inPrice, outPrice) {
   const outCost = completionTokens / 1e6 * (outPrice ?? 0) || 0;
   return Number((inCost + outCost).toFixed(6));
 }
+function formatTranscriptForMember(transcript, currentMemberId, currentMemberName) {
+  return transcript.map((e) => {
+    const isSelf = e.memberId === currentMemberId;
+    if (isSelf) {
+      return `[YOU (@${currentMemberName}) in Round ${e.round}]:
+${e.content}`;
+    }
+    return `[@${e.speaker} in Round ${e.round}]:
+${e.content}`;
+  }).join("\n\n---\n\n");
+}
 function renderTranscript(t) {
-  return t.map((e) => `${e.speaker}: ${e.content}`).join("\n\n");
+  return t.map((e) => {
+    const r = "round" in e && e.round ? ` (Round ${e.round})` : "";
+    return `@${e.speaker}${r}:
+${e.content}`;
+  }).join("\n\n");
 }
 var CALL_TIMEOUT_MS, SessionRunner, SessionCancelled;
 var init_runner = __esm({
@@ -528,8 +548,10 @@ var init_runner = __esm({
         this.deps = deps;
       }
       providerLimits = /* @__PURE__ */ new Map();
-      async run(sessionId, councilId, topic, signal) {
+      async run(sessionId, councilId, topic, signalOrController) {
         const { bus } = this.deps;
+        const controller = isSessionController(signalOrController) ? signalOrController : null;
+        const signal = isSessionController(signalOrController) ? signalOrController.signal : signalOrController;
         try {
           const council = this.deps.loadCouncil(councilId);
           if (!council) throw new Error("council not found");
@@ -564,33 +586,61 @@ var init_runner = __esm({
             }
           });
           const strategy = getStrategy(council.strategy);
-          const rounds = strategy.buildRounds({ rounds: council.rounds, memberIds: activeMembers.map((m) => m.id) });
           const transcript = [];
           let roundNum = 0;
-          for (const round of rounds) {
+          let totalPlannedRounds = council.rounds;
+          while (roundNum < totalPlannedRounds) {
             roundNum++;
             if (signal.aborted) throw new Error("cancelled");
+            if (controller && controller.shouldConcludeEarly()) {
+              bus.publish({ type: "session.concluding", sessionId, reason: "concluded early" });
+              break;
+            }
             bus.publish({ type: "round.started", sessionId, round: roundNum });
-            await Promise.all(
-              round.map(async (memberId) => {
+            const memberIds = activeMembers.map((m) => m.id);
+            if (council.strategy === "debate") {
+              for (let i = 0; i < memberIds.length; i++) {
+                const memberId = memberIds[i];
                 const member = activeMembers.find((m) => m.id === memberId);
-                if (!member) return;
+                if (!member) continue;
+                if (signal.aborted) throw new Error("cancelled");
+                if (controller && controller.shouldConcludeEarly()) break;
                 await this.callMember(
                   sessionId,
                   member,
                   topic,
                   transcript,
                   roundNum,
-                  round.indexOf(memberId),
-                  strategy.includeTranscript(roundNum),
+                  i,
+                  strategy.includeTranscript(roundNum) || transcript.length > 0,
                   signal
                 );
-              })
-            );
+              }
+            } else {
+              await Promise.all(
+                memberIds.map(async (memberId, i) => {
+                  const member = activeMembers.find((m) => m.id === memberId);
+                  if (!member) return;
+                  await this.callMember(
+                    sessionId,
+                    member,
+                    topic,
+                    transcript,
+                    roundNum,
+                    i,
+                    strategy.includeTranscript(roundNum),
+                    signal
+                  );
+                })
+              );
+            }
             bus.publish({ type: "round.completed", sessionId, round: roundNum });
+            if (controller) {
+              totalPlannedRounds = council.rounds + controller.getAdditionalRounds();
+            }
           }
           const moderator = council.moderatorMemberId ? activeMembers.find((m) => m.id === council.moderatorMemberId) : void 0;
-          if (moderator) {
+          if (moderator && transcript.length > 0) {
             if (signal.aborted) throw new Error("cancelled");
             bus.publish({ type: "moderator.started", sessionId });
             await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true);
@@ -634,15 +684,32 @@ var init_runner = __esm({
         if (isSynthesis) {
           messages.push(...buildSynthesisMessages(topic, renderTranscript(transcript)));
         } else {
-          if (member.systemPrompt) messages.push({ role: "system", content: member.systemPrompt });
+          const systemPromptParts = [];
+          systemPromptParts.push(
+            `You are @${member.name}, an expert participant in this AI council roundtable debate.
+DELIBERATION TOPIC:
+"${topic}"
+
+` + (member.systemPrompt ? `YOUR ASSIGNED PERSONA & PERSPECTIVE:
+${member.systemPrompt}
+
+` : "") + `CRITICAL IDENTITY & CHATROOM RULES:
+1. YOU ARE @${member.name}. NEVER refer to yourself in the third person. Do NOT say "I agree with @${member.name}" or "@${member.name} made a point".
+2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.
+3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").
+4. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
+          );
+          messages.push({ role: "system", content: systemPromptParts.join("\n") });
           if (includeTranscript && transcript.length > 0) {
             messages.push({
               role: "system",
-              content: `You are deliberating with other AI members of a council. Here is the transcript so far:
+              content: `=== COUNCIL DEBATE TRANSCRIPT SO FAR ===
 
-` + renderTranscript(transcript) + `
+` + formatTranscriptForMember(transcript, member.id, member.name) + `
 
-Respond to the others: rebut, concede, or refine. Be direct.`
+=== END OF TRANSCRIPT ===
+
+Now respond for Round ${round}. Speak directly to your council peers and advance the deliberation.`
             });
           }
           messages.push({ role: "user", content: topic });
@@ -775,7 +842,7 @@ Respond to the others: rebut, concede, or refine. Be direct.`
               }
             });
           }
-          transcript.push({ speaker: member.name, content: result.text });
+          transcript.push({ speaker: member.name, memberId: member.id, round, content: result.text });
         } catch (err) {
           const latency = Date.now() - started;
           const msgText = err instanceof Error ? err.message : String(err);
@@ -945,7 +1012,7 @@ var init_events = __esm({
 
 // packages/shared/dist/schemas.js
 import { z } from "zod";
-var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, configImportSchema;
+var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, configImportSchema;
 var init_schemas = __esm({
   "packages/shared/dist/schemas.js"() {
     "use strict";
@@ -991,8 +1058,8 @@ var init_schemas = __esm({
       name: z.string().min(1).max(80),
       description: z.string().max(500).nullish(),
       strategy: strategyKindSchema,
-      rounds: z.number().int().min(1).max(10),
-      memberIds: z.array(z.string().uuid()).min(1).max(12),
+      rounds: z.number().int().min(1).max(100),
+      memberIds: z.array(z.string().uuid()).min(1).max(24),
       moderatorMemberId: z.string().uuid().nullish()
     }).refine((c) => !c.moderatorMemberId || c.memberIds.includes(c.moderatorMemberId), {
       message: "moderator must be one of the council members"
@@ -1001,8 +1068,8 @@ var init_schemas = __esm({
       name: z.string().min(1).max(80).optional(),
       description: z.string().max(500).nullable().optional(),
       strategy: strategyKindSchema.optional(),
-      rounds: z.number().int().min(1).max(10).optional(),
-      memberIds: z.array(z.string().uuid()).min(1).max(12).optional(),
+      rounds: z.number().int().min(1).max(100).optional(),
+      memberIds: z.array(z.string().uuid()).min(1).max(24).optional(),
       moderatorMemberId: z.string().uuid().nullable().optional()
     }).refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
       message: "moderator must be one of the council members"
@@ -1010,6 +1077,12 @@ var init_schemas = __esm({
     sessionCreateSchema = z.object({
       councilId: z.string().uuid(),
       topic: z.string().min(1).max(8e3)
+    });
+    sessionExtendSchema = z.object({
+      additionalRounds: z.number().int().min(1).max(50).default(1)
+    });
+    sessionConcludeSchema = z.object({
+      reason: z.string().max(500).optional()
     });
     configImportSchema = z.object({
       version: z.literal(1).optional(),
@@ -1046,8 +1119,8 @@ var init_schemas = __esm({
         name: z.string().min(1).max(80),
         description: z.string().max(500).nullish(),
         strategy: strategyKindSchema.optional(),
-        rounds: z.number().int().min(1).max(10).optional(),
-        memberIds: z.array(z.string().uuid()).max(12).optional(),
+        rounds: z.number().int().min(1).max(100).optional(),
+        memberIds: z.array(z.string().uuid()).max(24).optional(),
         moderatorMemberId: z.string().uuid().nullish()
       }))
     });
@@ -1636,6 +1709,26 @@ function registerSessionRoutes(app, deps) {
         "UPDATE sessions SET status='cancelled', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?"
       ).run(id);
     }
+    return { ok: true };
+  });
+  app.post("/api/v1/sessions/:id/extend", async (req) => {
+    const { id } = req.params;
+    const row = db.prepare("SELECT status FROM sessions WHERE id = ?").get(id);
+    if (!row) throw new AppError(404, "not_found", "session not found");
+    const body = sessionExtendSchema.parse(req.body ?? {});
+    const ok = sessions.extendSession(id, body.additionalRounds);
+    if (!ok) throw new AppError(400, "invalid_state", "session is not currently running");
+    logActivity(db, "session.extended", { sessionId: id, additionalRounds: body.additionalRounds });
+    return { ok: true, extendedRounds: body.additionalRounds };
+  });
+  app.post("/api/v1/sessions/:id/conclude", async (req) => {
+    const { id } = req.params;
+    const row = db.prepare("SELECT status FROM sessions WHERE id = ?").get(id);
+    if (!row) throw new AppError(404, "not_found", "session not found");
+    const body = sessionConcludeSchema.parse(req.body ?? {});
+    const ok = sessions.concludeSession(id, body.reason);
+    if (!ok) throw new AppError(400, "invalid_state", "session is not currently running");
+    logActivity(db, "session.concluding", { sessionId: id, reason: body.reason });
     return { ok: true };
   });
   app.post("/api/v1/sessions/:id/clone", async (req, reply) => {
@@ -2417,18 +2510,42 @@ import { randomUUID as randomUUID6 } from "node:crypto";
 function newSessionId() {
   return randomUUID6();
 }
-var SessionManager;
+var ActiveSessionController, SessionManager;
 var init_session_manager = __esm({
   "apps/server/src/engine/session-manager.ts"() {
     "use strict";
     init_runner();
+    ActiveSessionController = class {
+      abortController = new AbortController();
+      additionalRounds = 0;
+      concludeEarly = false;
+      get signal() {
+        return this.abortController.signal;
+      }
+      shouldConcludeEarly() {
+        return this.concludeEarly;
+      }
+      getAdditionalRounds() {
+        return this.additionalRounds;
+      }
+      extend(rounds) {
+        this.additionalRounds += Math.max(1, rounds);
+        return this.additionalRounds;
+      }
+      conclude() {
+        this.concludeEarly = true;
+      }
+      abort() {
+        this.abortController.abort();
+      }
+    };
     SessionManager = class {
       constructor(bus, runner, maxConcurrentSessions = 4) {
         this.bus = bus;
         this.runner = runner;
         this.maxConcurrentSessions = maxConcurrentSessions;
       }
-      aborts = /* @__PURE__ */ new Map();
+      controllers = /* @__PURE__ */ new Map();
       pending = [];
       active = 0;
       /** Kicks off deliberation for a pre-created session row. */
@@ -2440,18 +2557,18 @@ var init_session_manager = __esm({
         this.runSession(sessionId, councilId, topic);
       }
       runSession(sessionId, councilId, topic) {
-        const ac = new AbortController();
-        this.aborts.set(sessionId, ac);
+        const controller = new ActiveSessionController();
+        this.controllers.set(sessionId, controller);
         this.active++;
         const runner = this.runner;
         void (async () => {
           try {
-            await runner.run(sessionId, councilId, topic, ac.signal);
+            await runner.run(sessionId, councilId, topic, controller);
           } catch (err) {
             if (!(err instanceof SessionCancelled)) return;
           } finally {
             setTimeout(() => this.bus.closeSession(sessionId), 3e4);
-            this.aborts.delete(sessionId);
+            this.controllers.delete(sessionId);
             this.active--;
             const next = this.pending.shift();
             if (next) this.runSession(next.sessionId, next.councilId, next.topic);
@@ -2464,13 +2581,25 @@ var init_session_manager = __esm({
           this.pending.splice(pendingIndex, 1);
           return false;
         }
-        const ac = this.aborts.get(sessionId);
-        if (!ac) return false;
-        ac.abort();
+        const ctrl = this.controllers.get(sessionId);
+        if (!ctrl) return false;
+        ctrl.abort();
+        return true;
+      }
+      extendSession(sessionId, additionalRounds) {
+        const ctrl = this.controllers.get(sessionId);
+        if (!ctrl) return false;
+        ctrl.extend(additionalRounds);
+        return true;
+      }
+      concludeSession(sessionId, _reason) {
+        const ctrl = this.controllers.get(sessionId);
+        if (!ctrl) return false;
+        ctrl.conclude();
         return true;
       }
       isRunning(sessionId) {
-        return this.aborts.has(sessionId);
+        return this.controllers.has(sessionId);
       }
     };
   }
