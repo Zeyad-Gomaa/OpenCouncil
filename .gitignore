@@ -21,7 +21,7 @@ data/
 # from compiling Next.js on the user's machine. Everything below is intermediate.
 apps/web/.next/
 apps/web/out/
-packages/shared/dist/*.tsbuildinfo
+*.tsbuildinfo
 *.tgz
 
 # testing / coverage
