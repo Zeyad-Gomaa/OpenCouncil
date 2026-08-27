@@ -41,9 +41,16 @@ function encryptSecret(plain) {
 function decryptSecret(payload) {
   const [ivB64, tagB64, dataB64] = payload.split(":");
   if (!ivB64 || !tagB64 || !dataB64) throw new Error("vault: malformed ciphertext");
-  const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
+  try {
+    const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, "base64"));
+    decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
+  } catch (err) {
+    throw new Error(
+      "Unable to decrypt provider API key. The encryption key has changed since this key was saved. Please re-enter your API key in Settings.",
+      { cause: err }
+    );
+  }
 }
 var ALGO, IV_LEN, cachedKey;
 var init_crypto = __esm({
@@ -2469,7 +2476,7 @@ __export(config_exports2, {
   loadConfig: () => loadConfig
 });
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path2 from "node:path";
 import { z as z2 } from "zod";
 function loadConfig(env = process.env) {
@@ -2481,13 +2488,34 @@ function loadConfig(env = process.env) {
   }
   const dataDir = path2.dirname(databasePath);
   mkdirSync(dataDir, { recursive: true });
-  const secretKey = parsed.OPEN_COUNCIL_SECRET_KEY ?? randomBytes2(32).toString("hex");
+  let secretKey = parsed.OPEN_COUNCIL_SECRET_KEY;
+  let hasDurableSecret = true;
+  if (!secretKey) {
+    const keyFile = path2.join(dataDir, ".secret_key");
+    if (existsSync(keyFile)) {
+      try {
+        const stored = readFileSync(keyFile, "utf8").trim();
+        if (stored && stored.length >= 8) {
+          secretKey = stored;
+        }
+      } catch {
+      }
+    }
+    if (!secretKey) {
+      secretKey = randomBytes2(32).toString("hex");
+      try {
+        writeFileSync(keyFile, secretKey, { mode: 384 });
+      } catch {
+        hasDurableSecret = false;
+      }
+    }
+  }
   return {
     host: parsed.HOST,
     port: parsed.PORT,
     databasePath,
     dataDir,
-    hasDurableSecret: parsed.OPEN_COUNCIL_SECRET_KEY !== void 0,
+    hasDurableSecret,
     secretKey,
     seedDemoCouncil: parsed.SEED_DEMO_COUNCIL,
     logLevel: parsed.LOG_LEVEL
@@ -2944,7 +2972,7 @@ var init_session_manager = __esm({
 // apps/server/src/cli.ts
 init_crypto();
 import path3 from "node:path";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync as existsSync2, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID as randomUUID7 } from "node:crypto";
 function parseArgs(argv) {
@@ -3236,7 +3264,7 @@ function runHeadless(args, db, packageRoot) {
         node: process.versions.node,
         database: "ok",
         migrations: Number(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n) > 0 ? "ok" : "missing",
-        staticAssets: existsSync(path3.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync(path3.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
+        staticAssets: existsSync2(path3.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync2(path3.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
         vault: process.env.OPEN_COUNCIL_SECRET_KEY ? "durable-key-configured" : "ephemeral-key-warning"
       },
       args.json
@@ -3315,7 +3343,7 @@ async function main() {
   const packageRoot = path3.resolve(here, "..", "..", "..");
   const packagedWebDir = path3.join(here, "public");
   const sourceWebDir = path3.join(packageRoot, "apps", "web", "out");
-  const webOutDir = existsSync(packagedWebDir) ? packagedWebDir : sourceWebDir;
+  const webOutDir = existsSync2(packagedWebDir) ? packagedWebDir : sourceWebDir;
   if (args.host !== void 0) process.env.HOST = args.host;
   if (args.port !== void 0) process.env.PORT = String(args.port);
   if (args.databasePath) process.env.DATABASE_PATH = args.databasePath;
@@ -3367,7 +3395,7 @@ async function main() {
   const sessions = new SessionManager2(bus, runner);
   const app = await buildApp2({ config, db, bus, sessions });
   let uiReady = false;
-  if (existsSync(webOutDir)) {
+  if (existsSync2(webOutDir)) {
     const staticHandler = (await import("@fastify/static")).default;
     await app.register(staticHandler, {
       root: webOutDir,
@@ -3383,27 +3411,27 @@ async function main() {
       const rawPath = req.url.split("?")[0] || "/";
       const urlPath = decodeURIComponent(rawPath);
       const fileCandidate = path3.join(webOutDir, urlPath);
-      if (existsSync(fileCandidate) && statSync(fileCandidate).isFile()) {
+      if (existsSync2(fileCandidate) && statSync(fileCandidate).isFile()) {
         reply.sendFile(path3.relative(webOutDir, fileCandidate));
         return;
       }
       const dirIndexCandidate = path3.join(webOutDir, urlPath, "index.html");
-      if (existsSync(dirIndexCandidate)) {
+      if (existsSync2(dirIndexCandidate)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(dirIndexCandidate));
         return;
       }
       const htmlCandidate = path3.join(webOutDir, `${urlPath}.html`);
-      if (existsSync(htmlCandidate)) {
+      if (existsSync2(htmlCandidate)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(htmlCandidate));
         return;
       }
       const rootIndex = path3.join(webOutDir, "index.html");
-      if (existsSync(rootIndex)) {
+      if (existsSync2(rootIndex)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(rootIndex));
         return;
       }
       const fallback = path3.join(webOutDir, "404.html");
-      if (existsSync(fallback)) {
+      if (existsSync2(fallback)) {
         reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
       } else {
         reply.status(404).send({ error: { code: "not_found", message: "no such route" } });

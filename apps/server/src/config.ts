@@ -1,6 +1,6 @@
 /** Environment configuration — parsed once, validated with zod. */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 
@@ -21,7 +21,7 @@ export type AppConfig = {
   port: number
   databasePath: string
   dataDir: string
-  /** True when a durable master key was provided via env (keys survive restart). */
+  /** True when a durable master key was provided via env or persisted key file (keys survive restart). */
   hasDurableSecret: boolean
   secretKey: string
   seedDemoCouncil: boolean
@@ -41,14 +41,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const dataDir = path.dirname(databasePath)
   mkdirSync(dataDir, { recursive: true })
 
-  const secretKey = parsed.OPEN_COUNCIL_SECRET_KEY ?? randomBytes(32).toString('hex')
+  let secretKey = parsed.OPEN_COUNCIL_SECRET_KEY
+  let hasDurableSecret = true
+
+  if (!secretKey) {
+    const keyFile = path.join(dataDir, '.secret_key')
+    if (existsSync(keyFile)) {
+      try {
+        const stored = readFileSync(keyFile, 'utf8').trim()
+        if (stored && stored.length >= 8) {
+          secretKey = stored
+        }
+      } catch {
+        // ignore and generate
+      }
+    }
+    if (!secretKey) {
+      secretKey = randomBytes(32).toString('hex')
+      try {
+        writeFileSync(keyFile, secretKey, { mode: 0o600 })
+      } catch {
+        hasDurableSecret = false
+      }
+    }
+  }
 
   return {
     host: parsed.HOST,
     port: parsed.PORT,
     databasePath,
     dataDir,
-    hasDurableSecret: parsed.OPEN_COUNCIL_SECRET_KEY !== undefined,
+    hasDurableSecret,
     secretKey,
     seedDemoCouncil: parsed.SEED_DEMO_COUNCIL,
     logLevel: parsed.LOG_LEVEL,

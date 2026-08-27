@@ -31,9 +31,16 @@ function encryptSecret(plain) {
 function decryptSecret(payload) {
   const [ivB64, tagB64, dataB64] = payload.split(":");
   if (!ivB64 || !tagB64 || !dataB64) throw new Error("vault: malformed ciphertext");
-  const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
+  try {
+    const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, "base64"));
+    decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
+  } catch (err) {
+    throw new Error(
+      "Unable to decrypt provider API key. The encryption key has changed since this key was saved. Please re-enter your API key in Settings.",
+      { cause: err }
+    );
+  }
 }
 var ALGO, IV_LEN, cachedKey;
 var init_crypto = __esm({
@@ -1403,7 +1410,7 @@ function loadEnvFile(cwd = process.cwd()) {
 
 // apps/server/src/config.ts
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path2 from "node:path";
 import { z } from "zod";
 var envSchema = z.object({
@@ -1423,13 +1430,34 @@ function loadConfig(env = process.env) {
   }
   const dataDir = path2.dirname(databasePath);
   mkdirSync(dataDir, { recursive: true });
-  const secretKey = parsed.OPEN_COUNCIL_SECRET_KEY ?? randomBytes(32).toString("hex");
+  let secretKey = parsed.OPEN_COUNCIL_SECRET_KEY;
+  let hasDurableSecret = true;
+  if (!secretKey) {
+    const keyFile = path2.join(dataDir, ".secret_key");
+    if (existsSync(keyFile)) {
+      try {
+        const stored = readFileSync(keyFile, "utf8").trim();
+        if (stored && stored.length >= 8) {
+          secretKey = stored;
+        }
+      } catch {
+      }
+    }
+    if (!secretKey) {
+      secretKey = randomBytes(32).toString("hex");
+      try {
+        writeFileSync(keyFile, secretKey, { mode: 384 });
+      } catch {
+        hasDurableSecret = false;
+      }
+    }
+  }
   return {
     host: parsed.HOST,
     port: parsed.PORT,
     databasePath,
     dataDir,
-    hasDurableSecret: parsed.OPEN_COUNCIL_SECRET_KEY !== void 0,
+    hasDurableSecret,
     secretKey,
     seedDemoCouncil: parsed.SEED_DEMO_COUNCIL,
     logLevel: parsed.LOG_LEVEL

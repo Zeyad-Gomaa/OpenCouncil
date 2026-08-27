@@ -37,7 +37,14 @@ export function encryptSecret(plain: string): string {
 export function decryptSecret(payload: string): string {
   const [ivB64, tagB64, dataB64] = payload.split(':')
   if (!ivB64 || !tagB64 || !dataB64) throw new Error('vault: malformed ciphertext')
-  const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, 'base64'))
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
-  return Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]).toString('utf8')
+  try {
+    const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivB64, 'base64'))
+    decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+    return Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]).toString('utf8')
+  } catch (err) {
+    throw new Error(
+      'Unable to decrypt provider API key. The encryption key has changed since this key was saved. Please re-enter your API key in Settings.',
+      { cause: err },
+    )
+  }
 }
