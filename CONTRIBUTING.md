@@ -57,8 +57,7 @@ All runtime dependencies are declared in the root `package.json`.
 Two directories are committed build output, on purpose:
 
 - `apps/server/dist/` — the bundle plus the static UI, so that
-  `npm install -g github:Zeyad-Gomaa/OpenCouncil` does not compile Next.js on a
-  user's machine.
+  installing the release archive does not compile Next.js on a user's machine.
 - `packages/shared/dist/` — the declarations `apps/server` typechecks against.
 
 Regenerate both with `npm run build` and commit them with the change.

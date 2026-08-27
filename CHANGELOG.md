@@ -48,6 +48,10 @@ answer while you watch the transcript live.
   malformed input instead of failing with an opaque 500.
 - The `prepare` script is wired up again, so a source install without prebuilt
   artifacts builds itself.
+- Install instructions point at the release archive URL. `npm install -g
+github:…` symlinks the package into npm's cache temp directory, which npm
+  later garbage-collects, breaking the command and poisoning later installs
+  with `ENOTDIR`. Project-local git installs are unaffected.
 - `/health` and `/system/info` report the real package version instead of a
   hardcoded string.
 

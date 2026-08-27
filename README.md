@@ -28,11 +28,27 @@ your orchestration.
 **From GitHub (recommended):**
 
 ```bash
-npm install -g github:Zeyad-Gomaa/OpenCouncil
+npm install -g https://github.com/Zeyad-Gomaa/OpenCouncil/archive/refs/tags/v0.1.0.tar.gz
 opencouncil
 ```
 
-The GitHub package includes the production server and static UI artifacts, so installation does not compile the app. `opencouncil` serves the API + UI on one port (default 4311).
+The published archive includes the production server and static UI artifacts, so
+installation does not compile the app. `opencouncil` serves the API + UI on one
+port (default 4311).
+
+> **Use the archive URL, not `npm install -g github:Zeyad-Gomaa/OpenCouncil`.**
+> npm installs a global git dependency by symlinking it into `~/.npm/_cacache/tmp`,
+> which npm later garbage-collects — the command breaks, and the dangling link
+> makes every later install fail with `ENOTDIR ... rename`. If you hit that, remove
+> the stale entry and reinstall from the archive URL:
+>
+> ```bash
+> rm -f "$(npm config get prefix)/lib/node_modules/opencouncil" \
+>       "$(npm config get prefix)/bin/opencouncil"
+> ```
+>
+> Installing the git spec into a _project_ (`npm install github:…`, no `-g`) is
+> unaffected and works normally.
 
 The executable also supports headless workflows. `opencouncil --version` reads
 the package manifest, and invalid flags fail with exit code 2.

@@ -45,7 +45,8 @@ body:
     attributes:
       label: How did you install it?
       options:
-        - npm install -g github:Zeyad-Gomaa/OpenCouncil
+        - npm install -g <release archive URL>
+        - npm install -g github:Zeyad-Gomaa/OpenCouncil (known broken, see README)
         - Cloned the repo and ran npm run build
         - Docker
         - Other
