@@ -36,7 +36,8 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "build": "npm run build:shared && npm run build:server && npm run build:web",
+    "bundle": "npm run build:shared && npm run build:server && npm run build:web",
+    "build:all": "npm run bundle",
     "build:shared": "tsc -p packages/shared",
     "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
     "build:web": "next build apps/web && node scripts/copy-web.js",
