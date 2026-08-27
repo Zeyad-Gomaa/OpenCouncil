@@ -41,7 +41,8 @@ export const memberCreateSchema = z.object({
 });
 export const memberUpdateSchema = memberCreateSchema.partial();
 export const strategyKindSchema = z.enum(['round_robin', 'debate']);
-export const councilCreateSchema = z.object({
+export const councilCreateSchema = z
+    .object({
     name: z.string().min(1).max(80),
     description: z.string().max(500).nullish(),
     strategy: strategyKindSchema,
@@ -52,14 +53,16 @@ export const councilCreateSchema = z.object({
     .refine((c) => !c.moderatorMemberId || c.memberIds.includes(c.moderatorMemberId), {
     message: 'moderator must be one of the council members',
 });
-export const councilUpdateSchema = z.object({
+export const councilUpdateSchema = z
+    .object({
     name: z.string().min(1).max(80).optional(),
     description: z.string().max(500).nullable().optional(),
     strategy: strategyKindSchema.optional(),
     rounds: z.number().int().min(1).max(10).optional(),
     memberIds: z.array(z.string().uuid()).min(1).max(12).optional(),
     moderatorMemberId: z.string().uuid().nullable().optional(),
-}).refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
+})
+    .refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
     message: 'moderator must be one of the council members',
 });
 export const sessionCreateSchema = z.object({

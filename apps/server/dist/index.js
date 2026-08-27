@@ -298,8 +298,7 @@ function mapProviderError(err) {
   if (err instanceof AuthError) return new AppError(401, "provider_auth", err.message);
   if (err instanceof RateLimitError) return new AppError(429, "provider_rate_limit", err.message);
   if (err instanceof TimeoutError) return new AppError(504, "provider_timeout", err.message);
-  if (err instanceof ProviderHttpError)
-    return new AppError(502, "provider_http", err.message, { status: err.status });
+  if (err instanceof ProviderHttpError) return new AppError(502, "provider_http", err.message, { status: err.status });
   if (err instanceof AppError) return err;
   return new AppError(500, "internal", err instanceof Error ? err.message : "unknown error");
 }
@@ -546,7 +545,10 @@ function sessionToDTO(r) {
   };
 }
 function logActivity(db, action, detail) {
-  db.prepare("INSERT INTO activity_log (action, detail) VALUES (?, ?)").run(action, detail ? JSON.stringify(detail) : null);
+  db.prepare("INSERT INTO activity_log (action, detail) VALUES (?, ?)").run(
+    action,
+    detail ? JSON.stringify(detail) : null
+  );
 }
 var init_mappers = __esm({
   "apps/server/src/routes/mappers.ts"() {
@@ -574,17 +576,31 @@ function registerProviderRoutes(app, db) {
     const adapter = getAdapter(provider.protocol);
     const started = Date.now();
     try {
-      await adapter.chat({ baseUrl: provider.base_url ?? adapter.defaultBaseUrl ?? "", apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : void 0, modelId: model.model_id, messages: [{ role: "user", content: "Respond with the single word OK." }], maxTokens: 8, timeoutMs: 15e3 });
+      await adapter.chat({
+        baseUrl: provider.base_url ?? adapter.defaultBaseUrl ?? "",
+        apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : void 0,
+        modelId: model.model_id,
+        messages: [{ role: "user", content: "Respond with the single word OK." }],
+        maxTokens: 8,
+        timeoutMs: 15e3
+      });
       return { ok: true, latencyMs: Date.now() - started, errorCode: null, message: "connection successful" };
     } catch (error) {
-      return { ok: false, latencyMs: Date.now() - started, errorCode: error instanceof Error && /auth|401|403|key/i.test(error.message) ? "authentication_failed" : "connection_failed", message: "provider connection failed" };
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        errorCode: error instanceof Error && /auth|401|403|key/i.test(error.message) ? "authentication_failed" : "connection_failed",
+        message: "provider connection failed"
+      };
     }
   });
   app.post("/api/v1/providers/:id/discover-models", async (req) => {
     const { id } = req.params;
     const provider = db.prepare("SELECT protocol FROM providers WHERE id=?").get(id);
     if (!provider) throw new AppError(404, "not_found", "provider not found");
-    const models = db.prepare("SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name").all(id);
+    const models = db.prepare(
+      "SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name"
+    ).all(id);
     return { supported: false, reason: "automatic discovery is unavailable for this provider adapter", models };
   });
   app.get("/api/v1/providers", async () => {
@@ -637,7 +653,9 @@ function registerProviderRoutes(app, db) {
     const { id } = req.params;
     db.exec("BEGIN");
     try {
-      db.prepare(`UPDATE members SET enabled = 0 WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`).run(id);
+      db.prepare(
+        `UPDATE members SET enabled = 0 WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`
+      ).run(id);
       db.prepare("DELETE FROM providers WHERE id = ?").run(id);
       logActivity(db, "provider.deleted", { id });
       db.exec("COMMIT");
@@ -752,7 +770,9 @@ function listMembers(db) {
   return db.prepare(`${MEMBER_JOIN} ORDER BY mem.created_at`).all();
 }
 function councilMembers(db, councilId) {
-  return db.prepare(`${MEMBER_JOIN} JOIN council_members cm ON cm.member_id = mem.id AND cm.council_id = ? ORDER BY cm.position`).all(councilId);
+  return db.prepare(
+    `${MEMBER_JOIN} JOIN council_members cm ON cm.member_id = mem.id AND cm.council_id = ? ORDER BY cm.position`
+  ).all(councilId);
 }
 function registerMemberCouncilRoutes(app, db) {
   app.get("/api/v1/members", async () => listMembers(db));
@@ -853,7 +873,9 @@ function registerMemberCouncilRoutes(app, db) {
     const c = cur;
     db.exec("BEGIN");
     try {
-      db.prepare(`UPDATE councils SET name=?, description=?, strategy=?, rounds=?, moderator_member_id=? WHERE id=?`).run(
+      db.prepare(
+        `UPDATE councils SET name=?, description=?, strategy=?, rounds=?, moderator_member_id=? WHERE id=?`
+      ).run(
         body.name ?? c.name,
         body.description === void 0 ? c.description : body.description,
         body.strategy ?? c.strategy,
@@ -919,12 +941,14 @@ function registerSessionRoutes(app, deps) {
   function snapshotForCouncil(councilId) {
     const council = db.prepare("SELECT id, name, description, strategy, rounds, moderator_member_id FROM councils WHERE id = ?").get(councilId);
     if (!council) throw new AppError(404, "not_found", "council not found");
-    const members = db.prepare(`SELECT mem.id, mem.name, mem.system_prompt, mem.temperature, mem.max_tokens,
+    const members = db.prepare(
+      `SELECT mem.id, mem.name, mem.system_prompt, mem.temperature, mem.max_tokens,
       mem.avatar_color, mem.enabled, m.id AS model_id, m.model_id AS model_name, m.display_name,
       p.id AS provider_id, p.name AS provider_name
       FROM council_members cm JOIN members mem ON mem.id = cm.member_id
       LEFT JOIN models m ON m.id = mem.model_id LEFT JOIN providers p ON p.id = m.provider_id
-      WHERE cm.council_id = ? ORDER BY cm.position`).all(councilId);
+      WHERE cm.council_id = ? ORDER BY cm.position`
+    ).all(councilId);
     return JSON.stringify({ ...council, members });
   }
   app.get("/api/v1/sessions", async (req) => {
@@ -956,10 +980,12 @@ function registerSessionRoutes(app, deps) {
       where.push("s.created_at < ?");
       params.push(q.cursor);
     }
-    const rows = db.prepare(`SELECT s.*, COALESCE(c.name, json_extract(s.snapshot_json, '$.name')) AS council_name,
+    const rows = db.prepare(
+      `SELECT s.*, COALESCE(c.name, json_extract(s.snapshot_json, '$.name')) AS council_name,
       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count
       FROM sessions s LEFT JOIN councils c ON c.id = s.council_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY s.created_at DESC LIMIT ?`).all(...params, lim);
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY s.created_at DESC LIMIT ?`
+    ).all(...params, lim);
     return rows.map((r) => sessionToDTO(r));
   });
   app.post("/api/v1/sessions", async (req, reply) => {
@@ -992,7 +1018,9 @@ function registerSessionRoutes(app, deps) {
       `SELECT COUNT(*) AS calls, COALESCE(SUM(total_tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS cost
          FROM usage_events WHERE session_id = ? AND status = 'ok'`
     ).get(id);
-    const lastEventSequence = Number(db.prepare("SELECT COALESCE(MAX(sequence),0) AS sequence FROM session_events WHERE session_id=?").get(id).sequence);
+    const lastEventSequence = Number(
+      db.prepare("SELECT COALESCE(MAX(sequence),0) AS sequence FROM session_events WHERE session_id=?").get(id).sequence
+    );
     return {
       session: sessionToDTO(row),
       messages: msgs.map((m) => messageToDTO(m)),
@@ -1006,7 +1034,9 @@ function registerSessionRoutes(app, deps) {
     if (!row) throw new AppError(404, "not_found", "session not found");
     const ok = sessions.cancel(id);
     if (!ok && row.status === "queued") {
-      db.prepare("UPDATE sessions SET status='cancelled', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(id);
+      db.prepare(
+        "UPDATE sessions SET status='cancelled', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?"
+      ).run(id);
     }
     return { ok: true };
   });
@@ -1015,7 +1045,12 @@ function registerSessionRoutes(app, deps) {
     const source = db.prepare("SELECT council_id, topic, snapshot_json FROM sessions WHERE id=?").get(id);
     if (!source) throw new AppError(404, "not_found", "session not found");
     const cloneId = randomUUID4();
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status,snapshot_json) VALUES (?,?,?,'queued',?)").run(cloneId, source.council_id, source.topic, source.snapshot_json);
+    db.prepare("INSERT INTO sessions (id,council_id,topic,status,snapshot_json) VALUES (?,?,?,'queued',?)").run(
+      cloneId,
+      source.council_id,
+      source.topic,
+      source.snapshot_json
+    );
     sessions.startSession(cloneId, source.council_id, source.topic);
     reply.code(202);
     return sessionToDTO(db.prepare("SELECT * FROM sessions WHERE id=?").get(cloneId));
@@ -1025,7 +1060,11 @@ function registerSessionRoutes(app, deps) {
     const source = db.prepare("SELECT council_id, topic FROM sessions WHERE id=?").get(id);
     if (!source) throw new AppError(404, "not_found", "session not found");
     const rerunId = randomUUID4();
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status) VALUES (?,?,?,'queued')").run(rerunId, source.council_id, source.topic);
+    db.prepare("INSERT INTO sessions (id,council_id,topic,status) VALUES (?,?,?,'queued')").run(
+      rerunId,
+      source.council_id,
+      source.topic
+    );
     sessions.startSession(rerunId, source.council_id, source.topic);
     reply.code(202);
     return sessionToDTO(db.prepare("SELECT * FROM sessions WHERE id=?").get(rerunId));
@@ -1073,27 +1112,36 @@ ${m.content}`).join("\n\n")}`;
     reply.raw.write("retry: 2000\n\n");
     const { after } = req.query;
     const lastId = Number(req.headers["last-event-id"] ?? after ?? 0);
-    const durable = db.prepare("SELECT sequence, payload_json FROM session_events WHERE session_id = ? AND sequence > ? ORDER BY sequence").all(id, Number.isFinite(lastId) ? lastId : 0);
+    const durable = db.prepare(
+      "SELECT sequence, payload_json FROM session_events WHERE session_id = ? AND sequence > ? ORDER BY sequence"
+    ).all(id, Number.isFinite(lastId) ? lastId : 0);
     for (const event of durable) reply.raw.write(`id: ${event.sequence}
 data: ${event.payload_json}
 
 `);
     if (durable.length === 0) {
       const existing = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY round, round_position, id").all(id);
-      for (const m of existing) reply.raw.write(`data: ${JSON.stringify({ type: "message.replay", sessionId: id, message: messageToDTO(m) })}
+      for (const m of existing)
+        reply.raw.write(
+          `data: ${JSON.stringify({ type: "message.replay", sessionId: id, message: messageToDTO(m) })}
 
-`);
+`
+        );
     }
-    const unsub = bus.subscribe(id, (event, sequence) => {
-      try {
-        reply.raw.write(`id: ${sequence ?? ""}
+    const unsub = bus.subscribe(
+      id,
+      (event, sequence) => {
+        try {
+          reply.raw.write(`id: ${sequence ?? ""}
 data: ${JSON.stringify(event)}
 
 `);
-      } catch {
-        unsub();
-      }
-    }, () => reply.raw.write(": heartbeat\n\n"));
+        } catch {
+          unsub();
+        }
+      },
+      () => reply.raw.write(": heartbeat\n\n")
+    );
     req.raw.on("close", () => unsub());
   });
 }
@@ -1168,30 +1216,100 @@ __export(config_exports, {
 });
 function registerConfigRoutes(app, db) {
   app.get("/api/v1/config/export", async () => {
-    const councils = db.prepare("SELECT id,name,description,strategy,rounds,moderator_member_id AS moderatorMemberId FROM councils ORDER BY created_at").all().map((c) => ({ ...c, memberIds: db.prepare("SELECT member_id FROM council_members WHERE council_id=? ORDER BY position").all(c.id).map((m) => m.member_id) }));
-    return { version: 1, providers: db.prepare("SELECT id,name,protocol,base_url AS baseUrl,default_model_id AS defaultModelId,enabled,api_key_encrypted IS NOT NULL AS hasSecret FROM providers ORDER BY created_at").all(), models: db.prepare("SELECT id,provider_id AS providerId,model_id AS modelId,display_name AS displayName,context_window AS contextWindow,input_per_mtok_usd AS inputPerMTokUsd,output_per_mtok_usd AS outputPerMTokUsd,enabled FROM models ORDER BY created_at").all(), members: db.prepare("SELECT id,name,model_id AS modelId,system_prompt AS systemPrompt,temperature,max_tokens AS maxTokens,avatar_color AS avatarColor,enabled FROM members ORDER BY created_at").all(), councils };
+    const councils = db.prepare(
+      "SELECT id,name,description,strategy,rounds,moderator_member_id AS moderatorMemberId FROM councils ORDER BY created_at"
+    ).all().map((c) => ({
+      ...c,
+      memberIds: db.prepare("SELECT member_id FROM council_members WHERE council_id=? ORDER BY position").all(c.id).map((m) => m.member_id)
+    }));
+    return {
+      version: 1,
+      providers: db.prepare(
+        "SELECT id,name,protocol,base_url AS baseUrl,default_model_id AS defaultModelId,enabled,api_key_encrypted IS NOT NULL AS hasSecret FROM providers ORDER BY created_at"
+      ).all(),
+      models: db.prepare(
+        "SELECT id,provider_id AS providerId,model_id AS modelId,display_name AS displayName,context_window AS contextWindow,input_per_mtok_usd AS inputPerMTokUsd,output_per_mtok_usd AS outputPerMTokUsd,enabled FROM models ORDER BY created_at"
+      ).all(),
+      members: db.prepare(
+        "SELECT id,name,model_id AS modelId,system_prompt AS systemPrompt,temperature,max_tokens AS maxTokens,avatar_color AS avatarColor,enabled FROM members ORDER BY created_at"
+      ).all(),
+      councils
+    };
   });
   app.post("/api/v1/config/import", async (req) => {
     const parsed = configImportSchema.safeParse(req.body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
-      throw new AppError(400, "invalid_config", issue ? `${issue.path.join(".") || "body"}: ${issue.message}` : "invalid config payload");
+      throw new AppError(
+        400,
+        "invalid_config",
+        issue ? `${issue.path.join(".") || "body"}: ${issue.message}` : "invalid config payload"
+      );
     }
     const body = parsed.data;
     db.exec("BEGIN");
     try {
       for (const p of body.providers) {
-        db.prepare(`INSERT INTO providers (id,name,protocol,base_url,default_model_id,enabled,api_key_encrypted) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,base_url=excluded.base_url,default_model_id=excluded.default_model_id,enabled=excluded.enabled`).run(p.id, p.name, p.protocol, p.baseUrl ?? null, p.defaultModelId ?? null, p.enabled === false ? 0 : 1);
+        db.prepare(
+          `INSERT INTO providers (id,name,protocol,base_url,default_model_id,enabled,api_key_encrypted) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,base_url=excluded.base_url,default_model_id=excluded.default_model_id,enabled=excluded.enabled`
+        ).run(p.id, p.name, p.protocol, p.baseUrl ?? null, p.defaultModelId ?? null, p.enabled === false ? 0 : 1);
       }
-      for (const m of body.models) db.prepare(`INSERT INTO models (id,provider_id,model_id,display_name,context_window,input_per_mtok_usd,output_per_mtok_usd,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,enabled=excluded.enabled`).run(m.id, m.providerId, m.modelId, m.displayName, m.contextWindow ?? null, m.inputPerMTokUsd ?? null, m.outputPerMTokUsd ?? null, m.enabled === false ? 0 : 1);
-      for (const m of body.members) db.prepare(`INSERT INTO members (id,name,model_id,system_prompt,temperature,max_tokens,avatar_color,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,model_id=excluded.model_id,system_prompt=excluded.system_prompt,temperature=excluded.temperature,max_tokens=excluded.max_tokens,avatar_color=excluded.avatar_color,enabled=excluded.enabled`).run(m.id, m.name, m.modelId ?? null, m.systemPrompt ?? null, m.temperature ?? 0.7, m.maxTokens ?? null, m.avatarColor ?? "#c9a227", m.enabled === false ? 0 : 1);
+      for (const m of body.models)
+        db.prepare(
+          `INSERT INTO models (id,provider_id,model_id,display_name,context_window,input_per_mtok_usd,output_per_mtok_usd,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,enabled=excluded.enabled`
+        ).run(
+          m.id,
+          m.providerId,
+          m.modelId,
+          m.displayName,
+          m.contextWindow ?? null,
+          m.inputPerMTokUsd ?? null,
+          m.outputPerMTokUsd ?? null,
+          m.enabled === false ? 0 : 1
+        );
+      for (const m of body.members)
+        db.prepare(
+          `INSERT INTO members (id,name,model_id,system_prompt,temperature,max_tokens,avatar_color,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,model_id=excluded.model_id,system_prompt=excluded.system_prompt,temperature=excluded.temperature,max_tokens=excluded.max_tokens,avatar_color=excluded.avatar_color,enabled=excluded.enabled`
+        ).run(
+          m.id,
+          m.name,
+          m.modelId ?? null,
+          m.systemPrompt ?? null,
+          m.temperature ?? 0.7,
+          m.maxTokens ?? null,
+          m.avatarColor ?? "#c9a227",
+          m.enabled === false ? 0 : 1
+        );
       for (const c of body.councils) {
-        db.prepare(`INSERT INTO councils (id,name,description,strategy,rounds,moderator_member_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,strategy=excluded.strategy,rounds=excluded.rounds,moderator_member_id=excluded.moderator_member_id`).run(c.id, c.name, c.description ?? null, c.strategy ?? "round_robin", c.rounds ?? 1, c.moderatorMemberId ?? null);
+        db.prepare(
+          `INSERT INTO councils (id,name,description,strategy,rounds,moderator_member_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,strategy=excluded.strategy,rounds=excluded.rounds,moderator_member_id=excluded.moderator_member_id`
+        ).run(
+          c.id,
+          c.name,
+          c.description ?? null,
+          c.strategy ?? "round_robin",
+          c.rounds ?? 1,
+          c.moderatorMemberId ?? null
+        );
         db.prepare("DELETE FROM council_members WHERE council_id=?").run(c.id);
-        for (const [position, memberId] of (c.memberIds ?? []).entries()) db.prepare("INSERT INTO council_members (council_id,member_id,position) VALUES (?,?,?)").run(c.id, memberId, position);
+        for (const [position, memberId] of (c.memberIds ?? []).entries())
+          db.prepare("INSERT INTO council_members (council_id,member_id,position) VALUES (?,?,?)").run(
+            c.id,
+            memberId,
+            position
+          );
       }
       db.exec("COMMIT");
-      return { ok: true, imported: { providers: body.providers.length, models: body.models.length, members: body.members.length, councils: body.councils.length }, secretsImported: false };
+      return {
+        ok: true,
+        imported: {
+          providers: body.providers.length,
+          models: body.models.length,
+          members: body.members.length,
+          councils: body.councils.length
+        },
+        secretsImported: false
+      };
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
@@ -1454,7 +1572,9 @@ function migrate(db) {
   }
 }
 function recoverInterruptedSessions(db) {
-  const result = db.prepare(`UPDATE sessions SET status='failed', error='process restarted before session completed', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('queued','running')`).run();
+  const result = db.prepare(
+    `UPDATE sessions SET status='failed', error='process restarted before session completed', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('queued','running')`
+  ).run();
   return Number(result.changes);
 }
 
@@ -1613,15 +1733,20 @@ async function withRetry(operation, policy = DEFAULT_EXECUTION_POLICY, signal) {
     try {
       return { value: await operation(), retryCount };
     } catch (error) {
-      if (retryCount >= policy.maxRetries || !isTemporaryProviderError(error) || signal?.aborted) throw Object.assign(error instanceof Error ? error : new Error(String(error)), { retryCount });
+      if (retryCount >= policy.maxRetries || !isTemporaryProviderError(error) || signal?.aborted)
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { retryCount });
       const base = Math.min(policy.maxBackoffMs, policy.initialBackoffMs * 2 ** retryCount);
       retryCount++;
       await new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, base + Math.floor(Math.random() * Math.max(1, base / 4)));
-        signal?.addEventListener("abort", () => {
-          clearTimeout(timer);
-          reject(new Error("cancelled"));
-        }, { once: true });
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new Error("cancelled"));
+          },
+          { once: true }
+        );
       });
     }
   }
@@ -1747,7 +1872,16 @@ var SessionRunner = class {
           round.map(async (memberId) => {
             const member = activeMembers.find((m) => m.id === memberId);
             if (!member) return;
-            await this.callMember(sessionId, member, topic, transcript, roundNum, round.indexOf(memberId), strategy.includeTranscript(roundNum), signal);
+            await this.callMember(
+              sessionId,
+              member,
+              topic,
+              transcript,
+              roundNum,
+              round.indexOf(memberId),
+              strategy.includeTranscript(roundNum),
+              signal
+            );
           })
         );
         bus.publish({ type: "round.completed", sessionId, round: roundNum });
@@ -1783,7 +1917,14 @@ var SessionRunner = class {
     });
     const model = this.deps.loadModelForChat(member.modelId);
     if (!model) {
-      bus.publish({ type: "member.failed", sessionId, round, memberId: member.id, memberName: member.name, error: "model is missing or disabled" });
+      bus.publish({
+        type: "member.failed",
+        sessionId,
+        round,
+        memberId: member.id,
+        memberName: member.name,
+        error: "model is missing or disabled"
+      });
       return;
     }
     const messages = [];
@@ -1813,19 +1954,30 @@ Respond to the others: rebut, concede, or refine. Be direct.`
     try {
       const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(4);
       this.providerLimits.set(model.providerId, semaphore);
-      const attempted = await withRetry(() => semaphore.run(() => adapter.chat({
-        baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? "",
-        apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : void 0,
-        modelId: model.modelId,
-        messages: boundedMessages,
-        temperature: member.temperature,
-        maxTokens: member.maxTokens ?? void 0,
-        timeoutMs: CALL_TIMEOUT_MS,
+      const attempted = await withRetry(
+        () => semaphore.run(
+          () => adapter.chat({
+            baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? "",
+            apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : void 0,
+            modelId: model.modelId,
+            messages: boundedMessages,
+            temperature: member.temperature,
+            maxTokens: member.maxTokens ?? void 0,
+            timeoutMs: CALL_TIMEOUT_MS,
+            signal
+          })
+        ),
+        void 0,
         signal
-      })), void 0, signal);
+      );
       const result = attempted.value;
       const latency = Date.now() - started;
-      const cost = computeCost(result.promptTokens, result.completionTokens, model.inputPerMTokUsd, model.outputPerMTokUsd);
+      const cost = computeCost(
+        result.promptTokens,
+        result.completionTokens,
+        model.inputPerMTokUsd,
+        model.outputPerMTokUsd
+      );
       const msgId = this.deps.insertMessage({
         sessionId,
         memberId: member.id,
@@ -1873,26 +2025,52 @@ Respond to the others: rebut, concede, or refine. Be direct.`
         retryCount: attempted.retryCount,
         status: "ok"
       });
-      bus.publish({ type: "usage.recorded", sessionId, usage: { id: usageId, sessionId, providerId: model.providerId, providerName: model.providerName, modelId: model.stableModelId, modelName: model.modelName || model.modelId, memberId: member.id, memberName: member.name, promptTokens: result.promptTokens ?? 0, completionTokens: result.completionTokens ?? 0, totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0), costUsd: cost, latencyMs: latency, retryCount: attempted.retryCount, errorCode: null, status: "ok", createdAt: (/* @__PURE__ */ new Date()).toISOString() } });
-      if (isSynthesis) {
-        bus.publish({ type: "synthesis.completed", sessionId, message: {
-          id: String(msgId),
+      bus.publish({
+        type: "usage.recorded",
+        sessionId,
+        usage: {
+          id: usageId,
           sessionId,
+          providerId: model.providerId,
+          providerName: model.providerName,
+          modelId: model.stableModelId,
+          modelName: model.modelName || model.modelId,
           memberId: member.id,
           memberName: member.name,
-          role: "assistant",
-          kind: "synthesis",
-          round,
-          content: result.text,
-          usage: {
-            promptTokens: result.promptTokens,
-            completionTokens: result.completionTokens,
-            totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0),
-            costUsd: cost,
-            latencyMs: latency
-          },
+          promptTokens: result.promptTokens ?? 0,
+          completionTokens: result.completionTokens ?? 0,
+          totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0),
+          costUsd: cost,
+          latencyMs: latency,
+          retryCount: attempted.retryCount,
+          errorCode: null,
+          status: "ok",
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
-        } });
+        }
+      });
+      if (isSynthesis) {
+        bus.publish({
+          type: "synthesis.completed",
+          sessionId,
+          message: {
+            id: String(msgId),
+            sessionId,
+            memberId: member.id,
+            memberName: member.name,
+            role: "assistant",
+            kind: "synthesis",
+            round,
+            content: result.text,
+            usage: {
+              promptTokens: result.promptTokens,
+              completionTokens: result.completionTokens,
+              totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0),
+              costUsd: cost,
+              latencyMs: latency
+            },
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          }
+        });
       }
       transcript.push({ speaker: member.name, content: result.text });
     } catch (err) {
@@ -1916,7 +2094,29 @@ Respond to the others: rebut, concede, or refine. Be direct.`
         errorCode,
         status: "error"
       });
-      bus.publish({ type: "usage.recorded", sessionId, usage: { id: usageId, sessionId, providerId: model.providerId, providerName: model.providerName, modelId: model.stableModelId, modelName: model.modelName || model.modelId, memberId: member.id, memberName: member.name, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: null, latencyMs: latency, retryCount, errorCode, status: "error", createdAt: (/* @__PURE__ */ new Date()).toISOString() } });
+      bus.publish({
+        type: "usage.recorded",
+        sessionId,
+        usage: {
+          id: usageId,
+          sessionId,
+          providerId: model.providerId,
+          providerName: model.providerName,
+          modelId: model.stableModelId,
+          modelName: model.modelName || model.modelId,
+          memberId: member.id,
+          memberName: member.name,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          costUsd: null,
+          latencyMs: latency,
+          retryCount,
+          errorCode,
+          status: "error",
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      });
       const failMsgId = this.deps.insertMessage({
         sessionId,
         memberId: member.id,
@@ -1941,7 +2141,14 @@ Respond to the others: rebut, concede, or refine. Be direct.`
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         }
       });
-      bus.publish({ type: "member.failed", sessionId, round, memberId: member.id, memberName: member.name, error: msgText });
+      bus.publish({
+        type: "member.failed",
+        sessionId,
+        round,
+        memberId: member.id,
+        memberName: member.name,
+        error: msgText
+      });
     }
   }
 };
@@ -2096,9 +2303,13 @@ function makeRunnerDbHelpers(db) {
     },
     updateSessionStatus(sessionId, status, error) {
       if (status === "running") {
-        db.prepare(`UPDATE sessions SET status='running', started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(sessionId);
+        db.prepare(
+          `UPDATE sessions SET status='running', started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`
+        ).run(sessionId);
       } else {
-        db.prepare(`UPDATE sessions SET status=?, completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), error=COALESCE(?, error) WHERE id=?`).run(status, error ?? null, sessionId);
+        db.prepare(
+          `UPDATE sessions SET status=?, completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), error=COALESCE(?, error) WHERE id=?`
+        ).run(status, error ?? null, sessionId);
       }
     }
   };
@@ -2113,11 +2324,15 @@ async function buildApp(deps) {
     version: VERSION,
     instanceId: INSTANCE_ID,
     uptimeSeconds: Math.floor(process.uptime()),
-    providers: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM providers WHERE enabled=1").get().n),
+    providers: Number(
+      deps.db.prepare("SELECT COUNT(*) AS n FROM providers WHERE enabled=1").get().n
+    ),
     models: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM models WHERE enabled=1").get().n),
     members: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM members WHERE enabled=1").get().n),
     councils: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM councils").get().n),
-    runningSessions: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status IN ('queued','running')").get().n)
+    runningSessions: Number(
+      deps.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status IN ('queued','running')").get().n
+    )
   }));
   const { registerProviderRoutes: registerProviderRoutes2 } = await Promise.resolve().then(() => (init_providers(), providers_exports));
   registerProviderRoutes2(app, deps.db);
