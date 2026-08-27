@@ -14,6 +14,16 @@ data/
 .env.local
 .env.*.local
 
+# build output
+#
+# apps/server/dist IS tracked on purpose: `npm install github:...` installs from
+# the repo, and shipping the prebuilt bundle + static UI is what keeps that path
+# from compiling Next.js on the user's machine. Everything below is intermediate.
+apps/web/.next/
+apps/web/out/
+packages/shared/dist/*.tsbuildinfo
+*.tgz
+
 # testing / coverage
 coverage/
 

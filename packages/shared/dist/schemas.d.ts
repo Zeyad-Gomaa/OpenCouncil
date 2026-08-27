@@ -226,3 +226,194 @@ export declare const sessionCreateSchema: z.ZodObject<{
     councilId: string;
     topic: string;
 }>;
+/** Shape of `GET /config/export`, re-validated on import.
+ *
+ * Distinct from the create schemas because these rows carry their own ids: an
+ * import restores an existing configuration rather than minting a new one.
+ * Secrets are deliberately absent — exports only ever record `hasSecret`.
+ */
+export declare const configImportSchema: z.ZodObject<{
+    version: z.ZodOptional<z.ZodLiteral<1>>;
+    providers: z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        name: z.ZodString;
+        protocol: z.ZodEnum<["openai_compatible", "anthropic", "google", "mock"]>;
+        baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        defaultModelId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        enabled: z.ZodOptional<z.ZodBoolean>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        protocol: "openai_compatible" | "anthropic" | "google" | "mock";
+        id: string;
+        baseUrl?: string | null | undefined;
+        defaultModelId?: string | null | undefined;
+        enabled?: boolean | undefined;
+    }, {
+        name: string;
+        protocol: "openai_compatible" | "anthropic" | "google" | "mock";
+        id: string;
+        baseUrl?: string | null | undefined;
+        defaultModelId?: string | null | undefined;
+        enabled?: boolean | undefined;
+    }>, "many">;
+    models: z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        providerId: z.ZodString;
+        modelId: z.ZodString;
+        displayName: z.ZodString;
+        contextWindow: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        inputPerMTokUsd: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        outputPerMTokUsd: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        enabled: z.ZodOptional<z.ZodBoolean>;
+    }, "strip", z.ZodTypeAny, {
+        providerId: string;
+        modelId: string;
+        displayName: string;
+        id: string;
+        enabled?: boolean | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }, {
+        providerId: string;
+        modelId: string;
+        displayName: string;
+        id: string;
+        enabled?: boolean | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }>, "many">;
+    members: z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        name: z.ZodString;
+        modelId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        systemPrompt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        temperature: z.ZodOptional<z.ZodNumber>;
+        maxTokens: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avatarColor: z.ZodOptional<z.ZodString>;
+        enabled: z.ZodOptional<z.ZodBoolean>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        id: string;
+        enabled?: boolean | undefined;
+        modelId?: string | null | undefined;
+        systemPrompt?: string | null | undefined;
+        temperature?: number | undefined;
+        maxTokens?: number | null | undefined;
+        avatarColor?: string | undefined;
+    }, {
+        name: string;
+        id: string;
+        enabled?: boolean | undefined;
+        modelId?: string | null | undefined;
+        systemPrompt?: string | null | undefined;
+        temperature?: number | undefined;
+        maxTokens?: number | null | undefined;
+        avatarColor?: string | undefined;
+    }>, "many">;
+    councils: z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        name: z.ZodString;
+        description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        strategy: z.ZodOptional<z.ZodEnum<["round_robin", "debate"]>>;
+        rounds: z.ZodOptional<z.ZodNumber>;
+        memberIds: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        id: string;
+        description?: string | null | undefined;
+        strategy?: "round_robin" | "debate" | undefined;
+        rounds?: number | undefined;
+        memberIds?: string[] | undefined;
+        moderatorMemberId?: string | null | undefined;
+    }, {
+        name: string;
+        id: string;
+        description?: string | null | undefined;
+        strategy?: "round_robin" | "debate" | undefined;
+        rounds?: number | undefined;
+        memberIds?: string[] | undefined;
+        moderatorMemberId?: string | null | undefined;
+    }>, "many">;
+}, "strip", z.ZodTypeAny, {
+    providers: {
+        name: string;
+        protocol: "openai_compatible" | "anthropic" | "google" | "mock";
+        id: string;
+        baseUrl?: string | null | undefined;
+        defaultModelId?: string | null | undefined;
+        enabled?: boolean | undefined;
+    }[];
+    models: {
+        providerId: string;
+        modelId: string;
+        displayName: string;
+        id: string;
+        enabled?: boolean | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }[];
+    members: {
+        name: string;
+        id: string;
+        enabled?: boolean | undefined;
+        modelId?: string | null | undefined;
+        systemPrompt?: string | null | undefined;
+        temperature?: number | undefined;
+        maxTokens?: number | null | undefined;
+        avatarColor?: string | undefined;
+    }[];
+    councils: {
+        name: string;
+        id: string;
+        description?: string | null | undefined;
+        strategy?: "round_robin" | "debate" | undefined;
+        rounds?: number | undefined;
+        memberIds?: string[] | undefined;
+        moderatorMemberId?: string | null | undefined;
+    }[];
+    version?: 1 | undefined;
+}, {
+    providers: {
+        name: string;
+        protocol: "openai_compatible" | "anthropic" | "google" | "mock";
+        id: string;
+        baseUrl?: string | null | undefined;
+        defaultModelId?: string | null | undefined;
+        enabled?: boolean | undefined;
+    }[];
+    models: {
+        providerId: string;
+        modelId: string;
+        displayName: string;
+        id: string;
+        enabled?: boolean | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }[];
+    members: {
+        name: string;
+        id: string;
+        enabled?: boolean | undefined;
+        modelId?: string | null | undefined;
+        systemPrompt?: string | null | undefined;
+        temperature?: number | undefined;
+        maxTokens?: number | null | undefined;
+        avatarColor?: string | undefined;
+    }[];
+    councils: {
+        name: string;
+        id: string;
+        description?: string | null | undefined;
+        strategy?: "round_robin" | "debate" | undefined;
+        rounds?: number | undefined;
+        memberIds?: string[] | undefined;
+        moderatorMemberId?: string | null | undefined;
+    }[];
+    version?: 1 | undefined;
+}>;
+export type ConfigImport = z.infer<typeof configImportSchema>;

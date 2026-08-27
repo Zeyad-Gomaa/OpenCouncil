@@ -11,6 +11,7 @@ export type CouncilEvent = {
     type: 'member.started';
     sessionId: string;
     round: number;
+    memberId: string;
     memberName: string;
 } | {
     type: 'message.replay';
@@ -24,7 +25,15 @@ export type CouncilEvent = {
     type: 'member.completed';
     sessionId: string;
     round: number;
+    memberId: string;
     memberName: string;
+} | {
+    type: 'member.failed';
+    sessionId: string;
+    round: number;
+    memberId: string;
+    memberName: string;
+    error: string;
 } | {
     type: 'round.completed';
     sessionId: string;

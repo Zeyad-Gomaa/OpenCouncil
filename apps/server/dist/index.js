@@ -96,6 +96,197 @@ var init_http = __esm({
   }
 });
 
+// apps/server/src/providers/anthropic.ts
+var anthropicAdapter;
+var init_anthropic = __esm({
+  "apps/server/src/providers/anthropic.ts"() {
+    "use strict";
+    init_http();
+    anthropicAdapter = {
+      protocol: "anthropic",
+      defaultBaseUrl: "https://api.anthropic.com",
+      async chat(opts) {
+        const system = opts.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+        const rest = opts.messages.filter((m) => m.role !== "system");
+        const data = await httpJson(`${opts.baseUrl.replace(/\/$/, "")}/v1/messages`, {
+          headers: {
+            "x-api-key": opts.apiKey ?? "",
+            "anthropic-version": "2023-06-01"
+          },
+          body: {
+            model: opts.modelId,
+            max_tokens: opts.maxTokens ?? 4096,
+            ...system ? { system } : {},
+            messages: rest.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),
+            temperature: opts.temperature
+          },
+          timeoutMs: opts.timeoutMs,
+          signal: opts.signal
+        });
+        return {
+          text: (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join(""),
+          promptTokens: data.usage?.input_tokens ?? null,
+          completionTokens: data.usage?.output_tokens ?? null
+        };
+      }
+    };
+  }
+});
+
+// apps/server/src/providers/google.ts
+var googleAdapter;
+var init_google = __esm({
+  "apps/server/src/providers/google.ts"() {
+    "use strict";
+    init_http();
+    googleAdapter = {
+      protocol: "google",
+      defaultBaseUrl: "https://generativelanguage.googleapis.com",
+      async chat(opts) {
+        const base = opts.baseUrl.replace(/\/$/, "");
+        const url = `${base}/v1beta/models/${encodeURIComponent(opts.modelId)}:generateContent`;
+        const system = opts.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+        const contents = opts.messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+        const data = await httpJson(url, {
+          headers: { "x-goog-api-key": opts.apiKey ?? "" },
+          body: {
+            ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
+            contents,
+            generationConfig: {
+              temperature: opts.temperature,
+              maxOutputTokens: opts.maxTokens
+            }
+          },
+          timeoutMs: opts.timeoutMs,
+          signal: opts.signal
+        });
+        return {
+          text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join(""),
+          promptTokens: data.usageMetadata?.promptTokenCount ?? null,
+          completionTokens: data.usageMetadata?.candidatesTokenCount ?? null
+        };
+      }
+    };
+  }
+});
+
+// apps/server/src/providers/mock.ts
+function pick(arr, seed) {
+  let h = 0;
+  for (const c of seed) h = h * 31 + c.charCodeAt(0) | 0;
+  return arr[Math.abs(h) % arr.length];
+}
+function estimateTokens(s) {
+  return Math.max(1, Math.round(s.length / 4));
+}
+var OPENERS, mockAdapter;
+var init_mock = __esm({
+  "apps/server/src/providers/mock.ts"() {
+    "use strict";
+    OPENERS = [
+      "Having weighed the matter",
+      "From where I sit in this council",
+      "Let me be direct",
+      "I have studied the question closely"
+    ];
+    mockAdapter = {
+      protocol: "mock",
+      defaultBaseUrl: null,
+      async chat(opts) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 150 + Math.random() * 350);
+          opts.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t);
+              reject(new Error("cancelled"));
+            },
+            { once: true }
+          );
+        });
+        if (opts.signal?.aborted) throw new Error("cancelled");
+        const systemMsg = opts.messages.find((m) => m.role === "system")?.content ?? "";
+        const lastUser = [...opts.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+        const persona = systemMsg.split("\u2014")[0]?.trim() || "Member";
+        const isSynthesis = /synthes/i.test(systemMsg);
+        let text;
+        if (isSynthesis) {
+          text = `**The Council Convenes \u2014 Synthesis**
+
+After full deliberation on "${lastUser.slice(0, 120)}", the council finds broad agreement on three points:
+
+1. **Direction** \u2014 The Oracle's proposal stands as the primary course of action.
+2. **Risk** \u2014 The Skeptic's objections are answered with concrete mitigations rather than dismissal.
+3. **Execution** \u2014 Proceed in stages, verifying assumptions at each gate before committing further.
+
+This concludes the council's deliberation.`;
+        } else {
+          const opener = pick(OPENERS, persona + opts.modelId);
+          text = `${opener}, ${persona.toLowerCase()} holds that ${opts.modelId} approaches "${lastUser.slice(0, 80)}" with a structured plan: define the objective, enumerate constraints, then commit to the highest-leverage first move while keeping retreat options open.`;
+        }
+        return {
+          text,
+          promptTokens: estimateTokens(opts.messages.map((m) => m.content).join(" ")),
+          completionTokens: estimateTokens(text)
+        };
+      }
+    };
+  }
+});
+
+// apps/server/src/providers/openai-compatible.ts
+var openAICompatibleAdapter;
+var init_openai_compatible = __esm({
+  "apps/server/src/providers/openai-compatible.ts"() {
+    "use strict";
+    init_http();
+    openAICompatibleAdapter = {
+      protocol: "openai_compatible",
+      defaultBaseUrl: "https://api.openai.com/v1",
+      async chat(opts) {
+        const url = `${opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
+        const data = await httpJson(url, {
+          headers: opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {},
+          body: {
+            model: opts.modelId,
+            messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+            temperature: opts.temperature,
+            max_tokens: opts.maxTokens
+          },
+          timeoutMs: opts.timeoutMs,
+          signal: opts.signal
+        });
+        return {
+          text: data.choices?.[0]?.message?.content ?? "",
+          promptTokens: data.usage?.prompt_tokens ?? null,
+          completionTokens: data.usage?.completion_tokens ?? null
+        };
+      }
+    };
+  }
+});
+
+// apps/server/src/providers/registry.ts
+function getAdapter(protocol) {
+  return ADAPTERS[protocol];
+}
+var ADAPTERS;
+var init_registry = __esm({
+  "apps/server/src/providers/registry.ts"() {
+    "use strict";
+    init_anthropic();
+    init_google();
+    init_mock();
+    init_openai_compatible();
+    ADAPTERS = {
+      openai_compatible: openAICompatibleAdapter,
+      anthropic: anthropicAdapter,
+      google: googleAdapter,
+      mock: mockAdapter
+    };
+  }
+});
+
 // apps/server/src/lib/errors.ts
 var errors_exports = {};
 __export(errors_exports, {
@@ -157,7 +348,7 @@ var init_events = __esm({
 
 // packages/shared/dist/schemas.js
 import { z as z2 } from "zod";
-var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema;
+var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, configImportSchema;
 var init_schemas = __esm({
   "packages/shared/dist/schemas.js"() {
     "use strict";
@@ -222,6 +413,46 @@ var init_schemas = __esm({
     sessionCreateSchema = z2.object({
       councilId: z2.string().uuid(),
       topic: z2.string().min(1).max(8e3)
+    });
+    configImportSchema = z2.object({
+      version: z2.literal(1).optional(),
+      providers: z2.array(z2.object({
+        id: z2.string().uuid(),
+        name: z2.string().min(1).max(80),
+        protocol: providerProtocolSchema,
+        baseUrl: z2.string().url().nullish(),
+        defaultModelId: z2.string().max(200).nullish(),
+        enabled: z2.coerce.boolean().optional()
+      })),
+      models: z2.array(z2.object({
+        id: z2.string().uuid(),
+        providerId: z2.string().uuid(),
+        modelId: z2.string().min(1).max(200),
+        displayName: z2.string().min(1).max(120),
+        contextWindow: z2.number().int().positive().max(1e8).nullish(),
+        inputPerMTokUsd: z2.number().nonnegative().nullish(),
+        outputPerMTokUsd: z2.number().nonnegative().nullish(),
+        enabled: z2.coerce.boolean().optional()
+      })),
+      members: z2.array(z2.object({
+        id: z2.string().uuid(),
+        name: z2.string().min(1).max(60),
+        modelId: z2.string().uuid().nullish(),
+        systemPrompt: z2.string().max(2e4).nullish(),
+        temperature: z2.number().min(0).max(2).optional(),
+        maxTokens: z2.number().int().positive().max(2e5).nullish(),
+        avatarColor: z2.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        enabled: z2.coerce.boolean().optional()
+      })),
+      councils: z2.array(z2.object({
+        id: z2.string().uuid(),
+        name: z2.string().min(1).max(80),
+        description: z2.string().max(500).nullish(),
+        strategy: strategyKindSchema.optional(),
+        rounds: z2.number().int().min(1).max(10).optional(),
+        memberIds: z2.array(z2.string().uuid()).max(12).optional(),
+        moderatorMemberId: z2.string().uuid().nullish()
+      }))
     });
   }
 });
@@ -334,6 +565,28 @@ function registerProviderRoutes(app, db) {
     protocols: ["openai_compatible", "anthropic", "google", "mock"],
     presets: Object.entries(PROVIDER_PRESETS).map(([key, v]) => ({ key, ...v }))
   }));
+  app.post("/api/v1/providers/:id/test", async (req) => {
+    const { id } = req.params;
+    const provider = db.prepare("SELECT * FROM providers WHERE id=?").get(id);
+    if (!provider) throw new AppError(404, "not_found", "provider not found");
+    const model = db.prepare("SELECT model_id FROM models WHERE id=? OR (provider_id=? AND model_id=?) LIMIT 1").get(provider.default_model_id, id, provider.default_model_id);
+    if (!model) throw new AppError(400, "no_model", "provider has no configured model to test");
+    const adapter = getAdapter(provider.protocol);
+    const started = Date.now();
+    try {
+      await adapter.chat({ baseUrl: provider.base_url ?? adapter.defaultBaseUrl ?? "", apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : void 0, modelId: model.model_id, messages: [{ role: "user", content: "Respond with the single word OK." }], maxTokens: 8, timeoutMs: 15e3 });
+      return { ok: true, latencyMs: Date.now() - started, errorCode: null, message: "connection successful" };
+    } catch (error) {
+      return { ok: false, latencyMs: Date.now() - started, errorCode: error instanceof Error && /auth|401|403|key/i.test(error.message) ? "authentication_failed" : "connection_failed", message: "provider connection failed" };
+    }
+  });
+  app.post("/api/v1/providers/:id/discover-models", async (req) => {
+    const { id } = req.params;
+    const provider = db.prepare("SELECT protocol FROM providers WHERE id=?").get(id);
+    if (!provider) throw new AppError(404, "not_found", "provider not found");
+    const models = db.prepare("SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name").all(id);
+    return { supported: false, reason: "automatic discovery is unavailable for this provider adapter", models };
+  });
   app.get("/api/v1/providers", async () => {
     const rows = db.prepare("SELECT * FROM providers ORDER BY created_at").all();
     return rows.map(providerToDTO);
@@ -382,12 +635,16 @@ function registerProviderRoutes(app, db) {
   });
   app.delete("/api/v1/providers/:id", async (req) => {
     const { id } = req.params;
-    db.prepare(
-      `UPDATE members SET enabled = 0
-       WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`
-    ).run(id);
-    db.prepare("DELETE FROM providers WHERE id = ?").run(id);
-    logActivity(db, "provider.deleted", { id });
+    db.exec("BEGIN");
+    try {
+      db.prepare(`UPDATE members SET enabled = 0 WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`).run(id);
+      db.prepare("DELETE FROM providers WHERE id = ?").run(id);
+      logActivity(db, "provider.deleted", { id });
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     return { ok: true };
   });
   app.get("/api/v1/models", async (req) => {
@@ -445,9 +702,16 @@ function registerProviderRoutes(app, db) {
   });
   app.delete("/api/v1/models/:id", async (req) => {
     const { id } = req.params;
-    db.prepare("UPDATE members SET enabled = 0 WHERE model_id = ?").run(id);
-    db.prepare("DELETE FROM models WHERE id = ?").run(id);
-    logActivity(db, "model.deleted", { id });
+    db.exec("BEGIN");
+    try {
+      db.prepare("UPDATE members SET enabled = 0 WHERE model_id = ?").run(id);
+      db.prepare("DELETE FROM models WHERE id = ?").run(id);
+      logActivity(db, "model.deleted", { id });
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     return { ok: true };
   });
 }
@@ -459,6 +723,8 @@ var init_providers = __esm({
     init_errors();
     init_dist();
     init_mappers();
+    init_registry();
+    init_crypto();
     PROVIDER_PRESETS = {
       openai: { protocol: "openai_compatible", baseUrl: "https://api.openai.com/v1" },
       openrouter: { protocol: "openai_compatible", baseUrl: "https://openrouter.ai/api/v1" },
@@ -562,11 +828,18 @@ function registerMemberCouncilRoutes(app, db) {
       }
     }
     const id = randomUUID3();
-    db.prepare(
-      `INSERT INTO councils (id, name, description, strategy, rounds, moderator_member_id) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, body.name, body.description ?? null, body.strategy, body.rounds, body.moderatorMemberId ?? null);
-    const insertCM = db.prepare("INSERT INTO council_members (council_id, member_id, position) VALUES (?, ?, ?)");
-    body.memberIds.forEach((mid, i) => insertCM.run(id, mid, i));
+    db.exec("BEGIN");
+    try {
+      db.prepare(
+        `INSERT INTO councils (id, name, description, strategy, rounds, moderator_member_id) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(id, body.name, body.description ?? null, body.strategy, body.rounds, body.moderatorMemberId ?? null);
+      const insertCM = db.prepare("INSERT INTO council_members (council_id, member_id, position) VALUES (?, ?, ?)");
+      body.memberIds.forEach((mid, i) => insertCM.run(id, mid, i));
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     logActivity(db, "council.created", { id, name: body.name });
     reply.code(201);
     const row = db.prepare("SELECT * FROM councils WHERE id = ?").get(id);
@@ -578,31 +851,45 @@ function registerMemberCouncilRoutes(app, db) {
     if (!cur) throw new AppError(404, "not_found", "council not found");
     const body = councilUpdateSchema.parse(req.body);
     const c = cur;
-    db.prepare(`UPDATE councils SET name=?, description=?, strategy=?, rounds=?, moderator_member_id=? WHERE id=?`).run(
-      body.name ?? c.name,
-      body.description === void 0 ? c.description : body.description,
-      body.strategy ?? c.strategy,
-      body.rounds ?? c.rounds,
-      body.moderatorMemberId === void 0 ? c.moderator_member_id : body.moderatorMemberId,
-      id
-    );
-    if (body.memberIds) {
-      for (const mid of body.memberIds) {
-        if (!db.prepare("SELECT id FROM members WHERE id = ?").get(mid)) {
-          throw new AppError(404, "not_found", `member ${mid} not found`);
+    db.exec("BEGIN");
+    try {
+      db.prepare(`UPDATE councils SET name=?, description=?, strategy=?, rounds=?, moderator_member_id=? WHERE id=?`).run(
+        body.name ?? c.name,
+        body.description === void 0 ? c.description : body.description,
+        body.strategy ?? c.strategy,
+        body.rounds ?? c.rounds,
+        body.moderatorMemberId === void 0 ? c.moderator_member_id : body.moderatorMemberId,
+        id
+      );
+      if (body.memberIds) {
+        for (const mid of body.memberIds) {
+          if (!db.prepare("SELECT id FROM members WHERE id = ?").get(mid)) {
+            throw new AppError(404, "not_found", `member ${mid} not found`);
+          }
         }
+        db.prepare("DELETE FROM council_members WHERE council_id = ?").run(id);
+        const insertCM = db.prepare("INSERT INTO council_members (council_id, member_id, position) VALUES (?, ?, ?)");
+        body.memberIds.forEach((mid, i) => insertCM.run(id, mid, i));
       }
-      db.prepare("DELETE FROM council_members WHERE council_id = ?").run(id);
-      const insertCM = db.prepare("INSERT INTO council_members (council_id, member_id, position) VALUES (?, ?, ?)");
-      body.memberIds.forEach((mid, i) => insertCM.run(id, mid, i));
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
     }
     const row = db.prepare("SELECT * FROM councils WHERE id = ?").get(id);
     return councilToDTO(row, councilMembers(db, id));
   });
   app.delete("/api/v1/councils/:id", async (req) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM councils WHERE id = ?").run(id);
-    logActivity(db, "council.deleted", { id });
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM councils WHERE id = ?").run(id);
+      logActivity(db, "council.deleted", { id });
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     return { ok: true };
   });
 }
@@ -629,20 +916,50 @@ __export(sessions_exports, {
 import { randomUUID as randomUUID4 } from "node:crypto";
 function registerSessionRoutes(app, deps) {
   const { db, bus, sessions } = deps;
+  function snapshotForCouncil(councilId) {
+    const council = db.prepare("SELECT id, name, description, strategy, rounds, moderator_member_id FROM councils WHERE id = ?").get(councilId);
+    if (!council) throw new AppError(404, "not_found", "council not found");
+    const members = db.prepare(`SELECT mem.id, mem.name, mem.system_prompt, mem.temperature, mem.max_tokens,
+      mem.avatar_color, mem.enabled, m.id AS model_id, m.model_id AS model_name, m.display_name,
+      p.id AS provider_id, p.name AS provider_name
+      FROM council_members cm JOIN members mem ON mem.id = cm.member_id
+      LEFT JOIN models m ON m.id = mem.model_id LEFT JOIN providers p ON p.id = m.provider_id
+      WHERE cm.council_id = ? ORDER BY cm.position`).all(councilId);
+    return JSON.stringify({ ...council, members });
+  }
   app.get("/api/v1/sessions", async (req) => {
-    const { status, limit } = req.query;
-    const lim = Math.min(Math.max(parseInt(limit ?? "100", 10) || 100, 1), 500);
-    const rows = status ? db.prepare(
-      `SELECT s.*, c.name AS council_name,
-             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count
-             FROM sessions s JOIN councils c ON c.id = s.council_id
-             WHERE s.status = ? ORDER BY s.created_at DESC LIMIT ?`
-    ).all(status, lim) : db.prepare(
-      `SELECT s.*, c.name AS council_name,
-             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count
-             FROM sessions s JOIN councils c ON c.id = s.council_id
-             ORDER BY s.created_at DESC LIMIT ?`
-    ).all(lim);
+    const q = req.query;
+    const lim = Math.min(Math.max(parseInt(q.limit ?? "100", 10) || 100, 1), 500);
+    const where = [];
+    const params = [];
+    if (q.status) {
+      where.push("s.status = ?");
+      params.push(q.status);
+    }
+    if (q.councilId) {
+      where.push("s.council_id = ?");
+      params.push(q.councilId);
+    }
+    if (q.search) {
+      where.push("(s.topic LIKE ? OR c.name LIKE ?)");
+      params.push(`%${q.search}%`, `%${q.search}%`);
+    }
+    if (q.createdAfter) {
+      where.push("s.created_at >= ?");
+      params.push(q.createdAfter);
+    }
+    if (q.createdBefore) {
+      where.push("s.created_at <= ?");
+      params.push(q.createdBefore);
+    }
+    if (q.cursor) {
+      where.push("s.created_at < ?");
+      params.push(q.cursor);
+    }
+    const rows = db.prepare(`SELECT s.*, COALESCE(c.name, json_extract(s.snapshot_json, '$.name')) AS council_name,
+      (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count
+      FROM sessions s LEFT JOIN councils c ON c.id = s.council_id
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY s.created_at DESC LIMIT ?`).all(...params, lim);
     return rows.map((r) => sessionToDTO(r));
   });
   app.post("/api/v1/sessions", async (req, reply) => {
@@ -650,10 +967,12 @@ function registerSessionRoutes(app, deps) {
     const council = db.prepare("SELECT id FROM councils WHERE id = ?").get(body.councilId);
     if (!council) throw new AppError(404, "not_found", "council not found");
     const id = randomUUID4();
-    db.prepare(`INSERT INTO sessions (id, council_id, topic, status) VALUES (?, ?, ?, 'queued')`).run(
+    const snapshot = snapshotForCouncil(body.councilId);
+    db.prepare(`INSERT INTO sessions (id, council_id, topic, status, snapshot_json) VALUES (?, ?, ?, 'queued', ?)`).run(
       id,
       body.councilId,
-      body.topic
+      body.topic,
+      snapshot
     );
     logActivity(db, "session.started", { sessionId: id, councilId: body.councilId });
     sessions.startSession(id, body.councilId, body.topic);
@@ -663,19 +982,22 @@ function registerSessionRoutes(app, deps) {
   app.get("/api/v1/sessions/:id", async (req) => {
     const { id } = req.params;
     const row = db.prepare(
-      `SELECT s.*, c.name AS council_name, c.moderator_member_id
-         FROM sessions s JOIN councils c ON c.id = s.council_id WHERE s.id = ?`
+      `SELECT s.*, COALESCE(c.name, json_extract(s.snapshot_json, '$.name')) AS council_name,
+         COALESCE(c.moderator_member_id, json_extract(s.snapshot_json, '$.moderator_member_id')) AS moderator_member_id
+         FROM sessions s LEFT JOIN councils c ON c.id = s.council_id WHERE s.id = ?`
     ).get(id);
     if (!row) throw new AppError(404, "not_found", "session not found");
-    const msgs = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY id").all(id);
+    const msgs = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY round, round_position, id").all(id);
     const usage = db.prepare(
       `SELECT COUNT(*) AS calls, COALESCE(SUM(total_tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS cost
          FROM usage_events WHERE session_id = ? AND status = 'ok'`
     ).get(id);
+    const lastEventSequence = Number(db.prepare("SELECT COALESCE(MAX(sequence),0) AS sequence FROM session_events WHERE session_id=?").get(id).sequence);
     return {
       session: sessionToDTO(row),
       messages: msgs.map((m) => messageToDTO(m)),
-      usage
+      usage,
+      lastEventSequence
     };
   });
   app.post("/api/v1/sessions/:id/cancel", async (req) => {
@@ -688,6 +1010,56 @@ function registerSessionRoutes(app, deps) {
     }
     return { ok: true };
   });
+  app.post("/api/v1/sessions/:id/clone", async (req, reply) => {
+    const { id } = req.params;
+    const source = db.prepare("SELECT council_id, topic, snapshot_json FROM sessions WHERE id=?").get(id);
+    if (!source) throw new AppError(404, "not_found", "session not found");
+    const cloneId = randomUUID4();
+    db.prepare("INSERT INTO sessions (id,council_id,topic,status,snapshot_json) VALUES (?,?,?,'queued',?)").run(cloneId, source.council_id, source.topic, source.snapshot_json);
+    sessions.startSession(cloneId, source.council_id, source.topic);
+    reply.code(202);
+    return sessionToDTO(db.prepare("SELECT * FROM sessions WHERE id=?").get(cloneId));
+  });
+  app.post("/api/v1/sessions/:id/rerun", async (req, reply) => {
+    const { id } = req.params;
+    const source = db.prepare("SELECT council_id, topic FROM sessions WHERE id=?").get(id);
+    if (!source) throw new AppError(404, "not_found", "session not found");
+    const rerunId = randomUUID4();
+    db.prepare("INSERT INTO sessions (id,council_id,topic,status) VALUES (?,?,?,'queued')").run(rerunId, source.council_id, source.topic);
+    sessions.startSession(rerunId, source.council_id, source.topic);
+    reply.code(202);
+    return sessionToDTO(db.prepare("SELECT * FROM sessions WHERE id=?").get(rerunId));
+  });
+  app.get("/api/v1/sessions/:id/export", async (req, reply) => {
+    const { id } = req.params;
+    const { format = "json" } = req.query;
+    const row = db.prepare("SELECT * FROM sessions WHERE id=?").get(id);
+    if (!row) throw new AppError(404, "not_found", "session not found");
+    const messages = db.prepare("SELECT * FROM messages WHERE session_id=? ORDER BY round, round_position, id").all(id);
+    if (format === "markdown") {
+      const session = row;
+      reply.type("text/markdown; charset=utf-8");
+      return `# OpenCouncil Session
+
+**Status:** ${session.status}
+
+## Question
+
+${session.topic}
+
+## Transcript
+
+${messages.map((m) => `### ${m.member_name}
+
+${m.content}`).join("\n\n")}`;
+    }
+    if (format === "jsonl") {
+      reply.type("application/jsonl");
+      return messages.map((m) => JSON.stringify(m)).join("\n");
+    }
+    if (format !== "json") throw new AppError(400, "invalid_format", "format must be json, jsonl, or markdown");
+    return { session: row, messages };
+  });
   app.get("/api/v1/sessions/:id/events", async (req, reply) => {
     const { id } = req.params;
     const exists = db.prepare("SELECT id FROM sessions WHERE id = ?").get(id);
@@ -699,21 +1071,29 @@ function registerSessionRoutes(app, deps) {
       "x-accel-buffering": "no"
     });
     reply.raw.write("retry: 2000\n\n");
-    const existing = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY id").all(id);
-    for (const m of existing) {
-      reply.raw.write(`data: ${JSON.stringify({ type: "message.replay", sessionId: id, message: messageToDTO(m) })}
+    const { after } = req.query;
+    const lastId = Number(req.headers["last-event-id"] ?? after ?? 0);
+    const durable = db.prepare("SELECT sequence, payload_json FROM session_events WHERE session_id = ? AND sequence > ? ORDER BY sequence").all(id, Number.isFinite(lastId) ? lastId : 0);
+    for (const event of durable) reply.raw.write(`id: ${event.sequence}
+data: ${event.payload_json}
+
+`);
+    if (durable.length === 0) {
+      const existing = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY round, round_position, id").all(id);
+      for (const m of existing) reply.raw.write(`data: ${JSON.stringify({ type: "message.replay", sessionId: id, message: messageToDTO(m) })}
 
 `);
     }
-    const unsub = bus.subscribe(id, (event) => {
+    const unsub = bus.subscribe(id, (event, sequence) => {
       try {
-        reply.raw.write(`data: ${JSON.stringify(event)}
+        reply.raw.write(`id: ${sequence ?? ""}
+data: ${JSON.stringify(event)}
 
 `);
       } catch {
         unsub();
       }
-    });
+    }, () => reply.raw.write(": heartbeat\n\n"));
     req.raw.on("close", () => unsub());
   });
 }
@@ -781,10 +1161,69 @@ var init_activity = __esm({
   }
 });
 
+// apps/server/src/routes/config.ts
+var config_exports = {};
+__export(config_exports, {
+  registerConfigRoutes: () => registerConfigRoutes
+});
+function registerConfigRoutes(app, db) {
+  app.get("/api/v1/config/export", async () => {
+    const councils = db.prepare("SELECT id,name,description,strategy,rounds,moderator_member_id AS moderatorMemberId FROM councils ORDER BY created_at").all().map((c) => ({ ...c, memberIds: db.prepare("SELECT member_id FROM council_members WHERE council_id=? ORDER BY position").all(c.id).map((m) => m.member_id) }));
+    return { version: 1, providers: db.prepare("SELECT id,name,protocol,base_url AS baseUrl,default_model_id AS defaultModelId,enabled,api_key_encrypted IS NOT NULL AS hasSecret FROM providers ORDER BY created_at").all(), models: db.prepare("SELECT id,provider_id AS providerId,model_id AS modelId,display_name AS displayName,context_window AS contextWindow,input_per_mtok_usd AS inputPerMTokUsd,output_per_mtok_usd AS outputPerMTokUsd,enabled FROM models ORDER BY created_at").all(), members: db.prepare("SELECT id,name,model_id AS modelId,system_prompt AS systemPrompt,temperature,max_tokens AS maxTokens,avatar_color AS avatarColor,enabled FROM members ORDER BY created_at").all(), councils };
+  });
+  app.post("/api/v1/config/import", async (req) => {
+    const parsed = configImportSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new AppError(400, "invalid_config", issue ? `${issue.path.join(".") || "body"}: ${issue.message}` : "invalid config payload");
+    }
+    const body = parsed.data;
+    db.exec("BEGIN");
+    try {
+      for (const p of body.providers) {
+        db.prepare(`INSERT INTO providers (id,name,protocol,base_url,default_model_id,enabled,api_key_encrypted) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,base_url=excluded.base_url,default_model_id=excluded.default_model_id,enabled=excluded.enabled`).run(p.id, p.name, p.protocol, p.baseUrl ?? null, p.defaultModelId ?? null, p.enabled === false ? 0 : 1);
+      }
+      for (const m of body.models) db.prepare(`INSERT INTO models (id,provider_id,model_id,display_name,context_window,input_per_mtok_usd,output_per_mtok_usd,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,enabled=excluded.enabled`).run(m.id, m.providerId, m.modelId, m.displayName, m.contextWindow ?? null, m.inputPerMTokUsd ?? null, m.outputPerMTokUsd ?? null, m.enabled === false ? 0 : 1);
+      for (const m of body.members) db.prepare(`INSERT INTO members (id,name,model_id,system_prompt,temperature,max_tokens,avatar_color,enabled) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,model_id=excluded.model_id,system_prompt=excluded.system_prompt,temperature=excluded.temperature,max_tokens=excluded.max_tokens,avatar_color=excluded.avatar_color,enabled=excluded.enabled`).run(m.id, m.name, m.modelId ?? null, m.systemPrompt ?? null, m.temperature ?? 0.7, m.maxTokens ?? null, m.avatarColor ?? "#c9a227", m.enabled === false ? 0 : 1);
+      for (const c of body.councils) {
+        db.prepare(`INSERT INTO councils (id,name,description,strategy,rounds,moderator_member_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,strategy=excluded.strategy,rounds=excluded.rounds,moderator_member_id=excluded.moderator_member_id`).run(c.id, c.name, c.description ?? null, c.strategy ?? "round_robin", c.rounds ?? 1, c.moderatorMemberId ?? null);
+        db.prepare("DELETE FROM council_members WHERE council_id=?").run(c.id);
+        for (const [position, memberId] of (c.memberIds ?? []).entries()) db.prepare("INSERT INTO council_members (council_id,member_id,position) VALUES (?,?,?)").run(c.id, memberId, position);
+      }
+      db.exec("COMMIT");
+      return { ok: true, imported: { providers: body.providers.length, models: body.models.length, members: body.members.length, councils: body.councils.length }, secretsImported: false };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+var init_config = __esm({
+  "apps/server/src/routes/config.ts"() {
+    "use strict";
+    init_dist();
+    init_errors();
+  }
+});
+
+// apps/server/src/env.ts
+import path from "node:path";
+function loadEnvFile(cwd = process.cwd()) {
+  const override = process.env.OPEN_COUNCIL_ENV_FILE;
+  const file = override ? path.resolve(cwd, override) : path.join(cwd, ".env");
+  try {
+    process.loadEnvFile(file);
+    return file;
+  } catch (error) {
+    if (!override && error.code === "ENOENT") return null;
+    throw new Error(`could not read env file ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // apps/server/src/config.ts
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import path from "node:path";
+import path2 from "node:path";
 import { z } from "zod";
 var envSchema = z.object({
   HOST: z.string().default("127.0.0.1"),
@@ -799,9 +1238,9 @@ function loadConfig(env = process.env) {
   const isAbsolute = parsed.DATABASE_PATH.startsWith("/");
   let databasePath = parsed.DATABASE_PATH;
   if (!isAbsolute && !parsed.DATABASE_PATH.includes(process.cwd())) {
-    databasePath = path.join(process.cwd(), parsed.DATABASE_PATH);
+    databasePath = path2.join(process.cwd(), parsed.DATABASE_PATH);
   }
-  const dataDir = path.dirname(databasePath);
+  const dataDir = path2.dirname(databasePath);
   mkdirSync(dataDir, { recursive: true });
   const secretKey = parsed.OPEN_COUNCIL_SECRET_KEY ?? randomBytes(32).toString("hex");
   return {
@@ -941,6 +1380,59 @@ CREATE TABLE settings_kv (
   value TEXT NOT NULL
 );
 `
+  },
+  {
+    version: 2,
+    name: "historical-snapshots-and-usage-identifiers",
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v1;
+ALTER TABLE members RENAME TO members_v1;
+CREATE TABLE members (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+  system_prompt TEXT,
+  temperature REAL NOT NULL DEFAULT 0.7,
+  max_tokens INTEGER,
+  avatar_color TEXT NOT NULL DEFAULT '#c9a227',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO members SELECT * FROM members_v1;
+DROP TABLE members_v1;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v1;
+DROP TABLE council_members_v1;
+ALTER TABLE sessions ADD COLUMN snapshot_json TEXT;
+ALTER TABLE usage_events ADD COLUMN provider_id TEXT;
+ALTER TABLE usage_events ADD COLUMN model_id TEXT;
+ALTER TABLE usage_events ADD COLUMN member_id TEXT;
+ALTER TABLE messages ADD COLUMN round_position INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_usage_session ON usage_events(session_id);
+CREATE TABLE session_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(session_id, sequence)
+);
+CREATE INDEX idx_session_events_sequence ON session_events(session_id, sequence);
+`
+  },
+  {
+    version: 3,
+    name: "usage-retries-and-errors",
+    sql: `
+ALTER TABLE usage_events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN error_code TEXT;
+`
   }
 ];
 function migrate(db) {
@@ -960,6 +1452,10 @@ function migrate(db) {
       throw error;
     }
   }
+}
+function recoverInterruptedSessions(db) {
+  const result = db.prepare(`UPDATE sessions SET status='failed', error='process restarted before session completed', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('queued','running')`).run();
+  return Number(result.changes);
 }
 
 // apps/server/src/db/seed.ts
@@ -1028,7 +1524,11 @@ function seedDemoCouncil(db) {
 import { EventEmitter } from "node:events";
 var HEARTBEAT_MS = 15e3;
 var SessionBus = class {
+  constructor(persist) {
+    this.persist = persist;
+  }
   emitters = /* @__PURE__ */ new Map();
+  sequences = /* @__PURE__ */ new Map();
   emitterFor(sessionId) {
     let em = this.emitters.get(sessionId);
     if (!em) {
@@ -1040,14 +1540,17 @@ var SessionBus = class {
   }
   publish(event) {
     const em = this.emitters.get(event.sessionId);
-    if (em) em.emit("event", event);
+    const sequence = (this.sequences.get(event.sessionId) ?? 0) + 1;
+    this.sequences.set(event.sessionId, sequence);
+    this.persist?.(event, sequence);
+    if (em) em.emit("event", event, sequence);
   }
-  subscribe(sessionId, listener) {
+  subscribe(sessionId, listener, heartbeat) {
     const em = this.emitterFor(sessionId);
     em.on("event", listener);
     const hb = setInterval(() => {
       try {
-        em.emit("heartbeat");
+        heartbeat?.();
       } catch {
       }
     }, HEARTBEAT_MS);
@@ -1060,168 +1563,89 @@ var SessionBus = class {
     const em = this.emitters.get(sessionId);
     if (em) em.removeAllListeners();
     this.emitters.delete(sessionId);
+    this.sequences.delete(sessionId);
   }
 };
 
 // apps/server/src/engine/runner.ts
 init_crypto();
+init_registry();
 
-// apps/server/src/providers/anthropic.ts
-init_http();
-var anthropicAdapter = {
-  protocol: "anthropic",
-  defaultBaseUrl: "https://api.anthropic.com",
-  async chat(opts) {
-    const system = opts.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-    const rest = opts.messages.filter((m) => m.role !== "system");
-    const data = await httpJson(`${opts.baseUrl.replace(/\/$/, "")}/v1/messages`, {
-      headers: {
-        "x-api-key": opts.apiKey ?? "",
-        "anthropic-version": "2023-06-01"
-      },
-      body: {
-        model: opts.modelId,
-        max_tokens: opts.maxTokens ?? 4096,
-        ...system ? { system } : {},
-        messages: rest.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),
-        temperature: opts.temperature
-      },
-      timeoutMs: opts.timeoutMs,
-      signal: opts.signal
-    });
-    return {
-      text: (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join(""),
-      promptTokens: data.usage?.input_tokens ?? null,
-      completionTokens: data.usage?.output_tokens ?? null
-    };
-  }
-};
-
-// apps/server/src/providers/google.ts
-init_http();
-var googleAdapter = {
-  protocol: "google",
-  defaultBaseUrl: "https://generativelanguage.googleapis.com",
-  async chat(opts) {
-    const base = opts.baseUrl.replace(/\/$/, "");
-    const url = `${base}/v1beta/models/${encodeURIComponent(opts.modelId)}:generateContent`;
-    const system = opts.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-    const contents = opts.messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-    const data = await httpJson(url, {
-      headers: { "x-goog-api-key": opts.apiKey ?? "" },
-      body: {
-        ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
-        contents,
-        generationConfig: {
-          temperature: opts.temperature,
-          maxOutputTokens: opts.maxTokens
-        }
-      },
-      timeoutMs: opts.timeoutMs,
-      signal: opts.signal
-    });
-    return {
-      text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join(""),
-      promptTokens: data.usageMetadata?.promptTokenCount ?? null,
-      completionTokens: data.usageMetadata?.candidatesTokenCount ?? null
-    };
-  }
-};
-
-// apps/server/src/providers/mock.ts
-var OPENERS = [
-  "Having weighed the matter",
-  "From where I sit in this council",
-  "Let me be direct",
-  "I have studied the question closely"
-];
-function pick(arr, seed) {
-  let h = 0;
-  for (const c of seed) h = h * 31 + c.charCodeAt(0) | 0;
-  return arr[Math.abs(h) % arr.length];
+// apps/server/src/engine/context-budgeter.ts
+function estimateTokens2(text) {
+  return Math.ceil(text.length / 4);
 }
-function estimateTokens(s) {
-  return Math.max(1, Math.round(s.length / 4));
-}
-var mockAdapter = {
-  protocol: "mock",
-  defaultBaseUrl: null,
-  async chat(opts) {
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(resolve, 150 + Math.random() * 350);
-      opts.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t);
-          reject(new Error("cancelled"));
-        },
-        { once: true }
-      );
-    });
-    if (opts.signal?.aborted) throw new Error("cancelled");
-    const systemMsg = opts.messages.find((m) => m.role === "system")?.content ?? "";
-    const lastUser = [...opts.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const persona = systemMsg.split("\u2014")[0]?.trim() || "Member";
-    const isSynthesis = /synthes/i.test(systemMsg);
-    let text;
-    if (isSynthesis) {
-      text = `**The Council Convenes \u2014 Synthesis**
-
-After full deliberation on "${lastUser.slice(0, 120)}", the council finds broad agreement on three points:
-
-1. **Direction** \u2014 The Oracle's proposal stands as the primary course of action.
-2. **Risk** \u2014 The Skeptic's objections are answered with concrete mitigations rather than dismissal.
-3. **Execution** \u2014 Proceed in stages, verifying assumptions at each gate before committing further.
-
-This concludes the council's deliberation.`;
-    } else {
-      const opener = pick(OPENERS, persona + opts.modelId);
-      text = `${opener}, ${persona.toLowerCase()} holds that ${opts.modelId} approaches "${lastUser.slice(0, 80)}" with a structured plan: define the objective, enumerate constraints, then commit to the highest-leverage first move while keeping retreat options open.`;
+function fitMessages(messages, budget) {
+  if (!budget.contextWindow || budget.contextWindow <= 0) return messages;
+  const available = Math.max(1, budget.contextWindow - budget.responseTokens - budget.safetyMargin);
+  const systems = [];
+  const recent = [];
+  let used = 0;
+  for (const message of messages.filter((m) => m.role === "system")) {
+    const cost = estimateTokens2(message.content);
+    if (used + cost <= available) {
+      systems.push(message);
+      used += cost;
     }
-    return {
-      text,
-      promptTokens: estimateTokens(opts.messages.map((m) => m.content).join(" ")),
-      completionTokens: estimateTokens(text)
-    };
   }
-};
-
-// apps/server/src/providers/openai-compatible.ts
-init_http();
-var openAICompatibleAdapter = {
-  protocol: "openai_compatible",
-  defaultBaseUrl: "https://api.openai.com/v1",
-  async chat(opts) {
-    const url = `${opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
-    const data = await httpJson(url, {
-      headers: opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {},
-      body: {
-        model: opts.modelId,
-        messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
-        temperature: opts.temperature,
-        max_tokens: opts.maxTokens
-      },
-      timeoutMs: opts.timeoutMs,
-      signal: opts.signal
-    });
-    return {
-      text: data.choices?.[0]?.message?.content ?? "",
-      promptTokens: data.usage?.prompt_tokens ?? null,
-      completionTokens: data.usage?.completion_tokens ?? null
-    };
+  for (const message of [...messages.filter((m) => m.role !== "system")].reverse()) {
+    const cost = estimateTokens2(message.content);
+    if (used + cost <= available) {
+      recent.unshift(message);
+      used += cost;
+    }
   }
-};
-
-// apps/server/src/providers/registry.ts
-var ADAPTERS = {
-  openai_compatible: openAICompatibleAdapter,
-  anthropic: anthropicAdapter,
-  google: googleAdapter,
-  mock: mockAdapter
-};
-function getAdapter(protocol) {
-  return ADAPTERS[protocol];
+  return [...systems, ...recent];
 }
+
+// apps/server/src/engine/execution-policy.ts
+init_http();
+var DEFAULT_EXECUTION_POLICY = { maxRetries: 2, initialBackoffMs: 200, maxBackoffMs: 2e3 };
+function isTemporaryProviderError(error) {
+  if (error instanceof AuthError) return false;
+  if (error instanceof RateLimitError || error instanceof TimeoutError) return true;
+  return error instanceof ProviderHttpError && (error.status === 408 || error.status === 429 || error.status >= 500);
+}
+async function withRetry(operation, policy = DEFAULT_EXECUTION_POLICY, signal) {
+  let retryCount = 0;
+  for (; ; ) {
+    if (signal?.aborted) throw new Error("cancelled");
+    try {
+      return { value: await operation(), retryCount };
+    } catch (error) {
+      if (retryCount >= policy.maxRetries || !isTemporaryProviderError(error) || signal?.aborted) throw Object.assign(error instanceof Error ? error : new Error(String(error)), { retryCount });
+      const base = Math.min(policy.maxBackoffMs, policy.initialBackoffMs * 2 ** retryCount);
+      retryCount++;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, base + Math.floor(Math.random() * Math.max(1, base / 4)));
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new Error("cancelled"));
+        }, { once: true });
+      });
+    }
+  }
+}
+var Semaphore = class {
+  constructor(limit) {
+    this.limit = limit;
+  }
+  active = 0;
+  waiters = [];
+  async run(operation) {
+    if (this.active >= this.limit) await new Promise((resolve) => this.waiters.push(resolve));
+    this.active++;
+    try {
+      return await operation();
+    } finally {
+      this.active--;
+      this.waiters.shift()?.();
+    }
+  }
+};
+
+// apps/server/src/engine/runner.ts
+init_http();
 
 // apps/server/src/engine/moderator.ts
 var SYNTHESIS_SYSTEM_PROMPT = `You are the moderator of an AI council. You have watched a panel of AI members deliberate a question over one or more rounds. Your task:
@@ -1275,6 +1699,7 @@ var SessionRunner = class {
   constructor(deps) {
     this.deps = deps;
   }
+  providerLimits = /* @__PURE__ */ new Map();
   async run(sessionId, councilId, topic, signal) {
     const { bus } = this.deps;
     try {
@@ -1322,7 +1747,7 @@ var SessionRunner = class {
           round.map(async (memberId) => {
             const member = activeMembers.find((m) => m.id === memberId);
             if (!member) return;
-            await this.callMember(sessionId, member, topic, transcript, roundNum, strategy.includeTranscript(roundNum), signal);
+            await this.callMember(sessionId, member, topic, transcript, roundNum, round.indexOf(memberId), strategy.includeTranscript(roundNum), signal);
           })
         );
         bus.publish({ type: "round.completed", sessionId, round: roundNum });
@@ -1331,7 +1756,7 @@ var SessionRunner = class {
       if (moderator) {
         if (signal.aborted) throw new Error("cancelled");
         bus.publish({ type: "moderator.started", sessionId });
-        await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, true, signal, true);
+        await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true);
       }
       bus.publish({ type: "session.completed", sessionId });
     } catch (err) {
@@ -1347,17 +1772,18 @@ var SessionRunner = class {
     }
     this.deps.updateSessionStatus(sessionId, "completed");
   }
-  async callMember(sessionId, member, topic, transcript, round, includeTranscript, signal, isSynthesis = false) {
+  async callMember(sessionId, member, topic, transcript, round, roundPosition, includeTranscript, signal, isSynthesis = false) {
     const { bus } = this.deps;
     bus.publish({
       type: "member.started",
       sessionId,
       round,
+      memberId: member.id,
       memberName: member.name
     });
     const model = this.deps.loadModelForChat(member.modelId);
     if (!model) {
-      bus.publish({ type: "member.completed", sessionId, round, memberName: member.name });
+      bus.publish({ type: "member.failed", sessionId, round, memberId: member.id, memberName: member.name, error: "model is missing or disabled" });
       return;
     }
     const messages = [];
@@ -1377,19 +1803,27 @@ Respond to the others: rebut, concede, or refine. Be direct.`
       }
       messages.push({ role: "user", content: topic });
     }
+    const boundedMessages = fitMessages(messages, {
+      contextWindow: model.contextWindow,
+      responseTokens: member.maxTokens ?? 1024,
+      safetyMargin: 128
+    });
     const adapter = getAdapter(model.providerProtocol);
     const started = Date.now();
     try {
-      const result = await adapter.chat({
+      const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(4);
+      this.providerLimits.set(model.providerId, semaphore);
+      const attempted = await withRetry(() => semaphore.run(() => adapter.chat({
         baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? "",
         apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : void 0,
         modelId: model.modelId,
-        messages,
+        messages: boundedMessages,
         temperature: member.temperature,
         maxTokens: member.maxTokens ?? void 0,
         timeoutMs: CALL_TIMEOUT_MS,
         signal
-      });
+      })), void 0, signal);
+      const result = attempted.value;
       const latency = Date.now() - started;
       const cost = computeCost(result.promptTokens, result.completionTokens, model.inputPerMTokUsd, model.outputPerMTokUsd);
       const msgId = this.deps.insertMessage({
@@ -1398,6 +1832,7 @@ Respond to the others: rebut, concede, or refine. Be direct.`
         memberName: member.name,
         kind: isSynthesis ? "synthesis" : "discussion",
         round,
+        roundPosition,
         content: result.text
       });
       bus.publish({
@@ -1422,18 +1857,23 @@ Respond to the others: rebut, concede, or refine. Be direct.`
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         }
       });
-      bus.publish({ type: "member.completed", sessionId, round, memberName: member.name });
-      this.deps.recordUsage({
+      bus.publish({ type: "member.completed", sessionId, round, memberId: member.id, memberName: member.name });
+      const usageId = this.deps.recordUsage({
         sessionId,
+        memberId: member.id,
         memberName: member.name,
-        providerName: "",
-        modelName: model.modelId,
+        providerId: model.providerId,
+        providerName: model.providerName,
+        modelId: model.stableModelId,
+        modelName: model.modelName || model.modelId,
         promptTokens: result.promptTokens ?? 0,
         completionTokens: result.completionTokens ?? 0,
         costUsd: cost,
         latencyMs: latency,
+        retryCount: attempted.retryCount,
         status: "ok"
       });
+      bus.publish({ type: "usage.recorded", sessionId, usage: { id: usageId, sessionId, providerId: model.providerId, providerName: model.providerName, modelId: model.stableModelId, modelName: model.modelName || model.modelId, memberId: member.id, memberName: member.name, promptTokens: result.promptTokens ?? 0, completionTokens: result.completionTokens ?? 0, totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0), costUsd: cost, latencyMs: latency, retryCount: attempted.retryCount, errorCode: null, status: "ok", createdAt: (/* @__PURE__ */ new Date()).toISOString() } });
       if (isSynthesis) {
         bus.publish({ type: "synthesis.completed", sessionId, message: {
           id: String(msgId),
@@ -1458,23 +1898,32 @@ Respond to the others: rebut, concede, or refine. Be direct.`
     } catch (err) {
       const latency = Date.now() - started;
       const msgText = err instanceof Error ? err.message : String(err);
-      this.deps.recordUsage({
+      const retryCount = Number(err?.retryCount ?? 0);
+      const errorCode = err instanceof AuthError ? "authentication_failed" : err instanceof RateLimitError ? "rate_limited" : err instanceof TimeoutError ? "timeout" : err instanceof ProviderHttpError ? `http_${err.status}` : "provider_error";
+      const usageId = this.deps.recordUsage({
         sessionId,
+        memberId: member.id,
         memberName: member.name,
-        providerName: "",
-        modelName: model.modelId,
+        providerId: model.providerId,
+        providerName: model.providerName,
+        modelId: model.stableModelId,
+        modelName: model.modelName || model.modelId,
         promptTokens: 0,
         completionTokens: 0,
         costUsd: null,
         latencyMs: latency,
+        retryCount,
+        errorCode,
         status: "error"
       });
+      bus.publish({ type: "usage.recorded", sessionId, usage: { id: usageId, sessionId, providerId: model.providerId, providerName: model.providerName, modelId: model.stableModelId, modelName: model.modelName || model.modelId, memberId: member.id, memberName: member.name, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: null, latencyMs: latency, retryCount, errorCode, status: "error", createdAt: (/* @__PURE__ */ new Date()).toISOString() } });
       const failMsgId = this.deps.insertMessage({
         sessionId,
         memberId: member.id,
         memberName: member.name,
         kind: "system",
         round,
+        roundPosition,
         content: `[error] ${msgText}`
       });
       bus.publish({
@@ -1492,7 +1941,7 @@ Respond to the others: rebut, concede, or refine. Be direct.`
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         }
       });
-      bus.publish({ type: "member.completed", sessionId, round, memberName: member.name });
+      bus.publish({ type: "member.failed", sessionId, round, memberId: member.id, memberName: member.name, error: msgText });
     }
   }
 };
@@ -1504,34 +1953,47 @@ var SessionCancelled = class extends Error {
 
 // apps/server/src/engine/session-manager.ts
 var SessionManager = class {
-  constructor(bus, runner) {
+  constructor(bus, runner, maxConcurrentSessions = 4) {
     this.bus = bus;
     this.runner = runner;
+    this.maxConcurrentSessions = maxConcurrentSessions;
   }
   aborts = /* @__PURE__ */ new Map();
+  pending = [];
+  active = 0;
   /** Kicks off deliberation for a pre-created session row. */
   startSession(sessionId, councilId, topic) {
+    if (this.active >= this.maxConcurrentSessions) {
+      this.pending.push({ sessionId, councilId, topic });
+      return;
+    }
+    this.runSession(sessionId, councilId, topic);
+  }
+  runSession(sessionId, councilId, topic) {
     const ac = new AbortController();
     this.aborts.set(sessionId, ac);
+    this.active++;
     const runner = this.runner;
     void (async () => {
       try {
         await runner.run(sessionId, councilId, topic, ac.signal);
       } catch (err) {
-        if (!(err instanceof SessionCancelled)) {
-          this.bus.publish({
-            type: "session.failed",
-            sessionId,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
+        if (!(err instanceof SessionCancelled)) return;
       } finally {
         setTimeout(() => this.bus.closeSession(sessionId), 3e4);
         this.aborts.delete(sessionId);
+        this.active--;
+        const next = this.pending.shift();
+        if (next) this.runSession(next.sessionId, next.councilId, next.topic);
       }
     })();
   }
   cancel(sessionId) {
+    const pendingIndex = this.pending.findIndex((job) => job.sessionId === sessionId);
+    if (pendingIndex >= 0) {
+      this.pending.splice(pendingIndex, 1);
+      return false;
+    }
     const ac = this.aborts.get(sessionId);
     if (!ac) return false;
     ac.abort();
@@ -1545,32 +2007,56 @@ var SessionManager = class {
 // apps/server/src/app.ts
 import Fastify from "fastify";
 import { randomUUID as randomUUID5 } from "node:crypto";
+
+// apps/server/src/version.ts
+import { readFileSync } from "node:fs";
+import path3 from "node:path";
+import { fileURLToPath } from "node:url";
+function read() {
+  try {
+    const here = path3.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(path3.join(here, "..", "..", "..", "package.json"), "utf8"));
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+var VERSION = read();
+
+// apps/server/src/app.ts
+var INSTANCE_ID = randomUUID5();
 function makeRunnerDbHelpers(db) {
   return {
     recordUsage(u) {
-      db.prepare(
-        `INSERT INTO usage_events (session_id, member_name, provider_name, model_name,
-          prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      const result = db.prepare(
+        `INSERT INTO usage_events (session_id, provider_id, provider_name, model_id, member_id, member_name, model_name,
+          prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms, retry_count, error_code, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         u.sessionId,
-        u.memberName,
+        u.providerId ?? null,
         u.providerName || null,
+        u.modelId ?? null,
+        u.memberId ?? null,
+        u.memberName,
         u.modelName,
         u.promptTokens,
         u.completionTokens,
         u.promptTokens + u.completionTokens,
         u.costUsd,
         u.latencyMs,
+        u.retryCount ?? 0,
+        u.errorCode ?? null,
         u.status
       );
+      return Number(result.lastInsertRowid);
     },
     insertMessage(m) {
       const role = m.kind === "user" ? "user" : "assistant";
       const info = db.prepare(
-        `INSERT INTO messages (session_id, member_id, member_name, role, kind, round, content)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(m.sessionId, m.memberId, m.memberName, role, m.kind, m.round, m.content);
+        `INSERT INTO messages (session_id, member_id, member_name, role, kind, round, round_position, content)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(m.sessionId, m.memberId, m.memberName, role, m.kind, m.round, m.roundPosition ?? 0, m.content);
       return Number(info.lastInsertRowid);
     },
     loadCouncil(councilId) {
@@ -1600,7 +2086,8 @@ function makeRunnerDbHelpers(db) {
     },
     loadModelForChat(modelId) {
       const row = db.prepare(
-        `SELECT m.model_id AS modelId, p.protocol AS providerProtocol, p.base_url AS providerBaseUrl,
+        `SELECT m.model_id AS modelId, m.id AS stableModelId, p.id AS providerId, p.name AS providerName,
+                  m.display_name AS modelName, m.context_window AS contextWindow, p.protocol AS providerProtocol, p.base_url AS providerBaseUrl,
                   p.api_key_encrypted AS apiKeyEncrypted, m.input_per_mtok_usd AS inputPerMTokUsd,
                   m.output_per_mtok_usd AS outputPerMTokUsd
            FROM models m JOIN providers p ON p.id = m.provider_id WHERE m.id = ?`
@@ -1620,7 +2107,18 @@ async function buildApp(deps) {
   const app = Fastify({ logger: { level: deps.config.logLevel } });
   const { registerErrorHandlers: registerErrorHandlers2 } = await Promise.resolve().then(() => (init_errors(), errors_exports));
   registerErrorHandlers2(app);
-  app.get("/api/v1/health", async () => ({ ok: true, version: "0.1.0", instanceId: randomUUID5() }));
+  app.get("/api/v1/health", async () => ({ ok: true, version: VERSION, instanceId: INSTANCE_ID }));
+  app.get("/api/v1/system/health", async () => ({ ok: true, version: VERSION, instanceId: INSTANCE_ID }));
+  app.get("/api/v1/system/info", async () => ({
+    version: VERSION,
+    instanceId: INSTANCE_ID,
+    uptimeSeconds: Math.floor(process.uptime()),
+    providers: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM providers WHERE enabled=1").get().n),
+    models: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM models WHERE enabled=1").get().n),
+    members: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM members WHERE enabled=1").get().n),
+    councils: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM councils").get().n),
+    runningSessions: Number(deps.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status IN ('queued','running')").get().n)
+  }));
   const { registerProviderRoutes: registerProviderRoutes2 } = await Promise.resolve().then(() => (init_providers(), providers_exports));
   registerProviderRoutes2(app, deps.db);
   const { registerMemberCouncilRoutes: registerMemberCouncilRoutes2 } = await Promise.resolve().then(() => (init_councils(), councils_exports));
@@ -1629,15 +2127,20 @@ async function buildApp(deps) {
   registerSessionRoutes2(app, { db: deps.db, bus: deps.bus, sessions: deps.sessions });
   const { registerActivityRoutes: registerActivityRoutes2 } = await Promise.resolve().then(() => (init_activity(), activity_exports));
   registerActivityRoutes2(app, deps.db);
+  const { registerConfigRoutes: registerConfigRoutes2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+  registerConfigRoutes2(app, deps.db);
   return app;
 }
 
 // apps/server/src/index.ts
 async function main() {
+  loadEnvFile();
   const config = loadConfig();
   initVault(config.secretKey);
   const db = openDatabase(config);
   migrate(db);
+  const interrupted = recoverInterruptedSessions(db);
+  if (interrupted) console.warn(`[opencouncil] marked ${interrupted} interrupted session(s) failed after restart`);
   if (config.seedDemoCouncil && seedDemoCouncil(db)) {
     console.log("[opencouncil] seeded demo council (mock provider)");
   }
@@ -1646,7 +2149,14 @@ async function main() {
       "[opencouncil] WARNING: OPEN_COUNCIL_SECRET_KEY not set \u2014 provider API keys stored now will be unreadable after restart. Set it in .env for production use."
     );
   }
-  const bus = new SessionBus();
+  const bus = new SessionBus((event, sequence) => {
+    db.prepare("INSERT INTO session_events (session_id, sequence, type, payload_json) VALUES (?, ?, ?, ?)").run(
+      event.sessionId,
+      sequence,
+      event.type,
+      JSON.stringify(event)
+    );
+  });
   const helpers = makeRunnerDbHelpers(db);
   const runner = new SessionRunner({
     bus,
