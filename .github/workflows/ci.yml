@@ -22,12 +22,19 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Committed build output is up to date
+      # Deliberately excludes apps/server/dist/public: that subtree is Next.js
+      # output minified by @next/swc, a per-platform native binary, so a Linux
+      # runner cannot reproduce byte-for-byte what a maintainer built on macOS.
+      # The esbuild bundle and tsc declarations are deterministic across
+      # platforms, and they are what goes stale when src is edited.
+      - name: Committed server bundle is up to date
         run: |
           set -euo pipefail
-          if ! git diff --quiet -- apps/server/dist packages/shared/dist; then
-            echo "::error::apps/server/dist or packages/shared/dist is stale — run 'npm run build' and commit the result."
-            git diff --stat -- apps/server/dist packages/shared/dist
+          PATHS="apps/server/dist/cli.js apps/server/dist/index.js packages/shared/dist"
+          if ! git diff --quiet -- $PATHS; then
+            echo "::error::Committed build output is stale — run 'npm run build' and commit the result."
+            git diff --stat -- $PATHS
+            git diff -- $PATHS | head -100
             exit 1
           fi
       - name: Package smoke test
