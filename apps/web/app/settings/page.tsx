@@ -1,8 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { apiGet, apiSend } from '../lib/api'
-import type { CouncilDTO, MemberDTO, ModelDTO, ProviderDTO, StrategyKind } from '@opencouncil/shared'
+import Modal from '../components/Modal'
+import ProviderCard from '../components/ProviderCard'
+import ModelCard from '../components/ModelCard'
+import MemberCard from '../components/MemberCard'
+import CouncilCard from '../components/CouncilCard'
+import SearchFilter from '../components/SearchFilter'
+import type { ProviderProtocol, ProviderDTO, ModelDTO, MemberDTO, StrategyKind, CouncilDTO } from '@opencouncil/shared'
+
+const COLORS = ['#818cf8', '#34d399', '#f59e0b', '#f87171', '#60a5fa', '#a78bfa']
+
+type Tab = 'providers' | 'models' | 'members' | 'councils'
 
 interface Preset {
   key: string
@@ -10,10 +20,32 @@ interface Preset {
   baseUrl?: string
 }
 
-type Tab = 'providers' | 'models' | 'members' | 'councils'
-
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('providers')
+  const [providers, setProviders] = useState<ProviderDTO[]>([])
+  const [models, setModels] = useState<ModelDTO[]>([])
+  const [members, setMembers] = useState<MemberDTO[]>([])
+  const [councils, setCouncils] = useState<CouncilDTO[]>([])
+
+  const loadProviders = useCallback(() => {
+    apiGet<ProviderDTO[]>('/providers').then(setProviders).catch(() => {})
+  }, [])
+  const loadModels = useCallback(() => {
+    apiGet<ModelDTO[]>('/models').then(setModels).catch(() => {})
+  }, [])
+  const loadMembers = useCallback(() => {
+    apiGet<MemberDTO[]>('/members').then(setMembers).catch(() => {})
+  }, [])
+  const loadCouncils = useCallback(() => {
+    apiGet<CouncilDTO[]>('/councils').then(setCouncils).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadProviders()
+    loadModels()
+    loadMembers()
+    loadCouncils()
+  }, [loadProviders, loadModels, loadMembers, loadCouncils])
 
   return (
     <div>
@@ -28,42 +60,49 @@ export default function SettingsPage() {
       <div className="tabs">
         {(['providers', 'models', 'members', 'councils'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'primary' : ''} onClick={() => setTab(t)}>
-            {t[0]!.toUpperCase() + t.slice(1)}
+            {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
 
-      {tab === 'providers' && <ProvidersTab />}
-      {tab === 'models' && <ModelsTab />}
-      {tab === 'members' && <MembersTab />}
-      {tab === 'councils' && <CouncilsTab />}
+      {tab === 'providers' && <ProvidersTab providers={providers} reload={loadProviders} />}
+      {tab === 'models' && <ModelsTab models={models} providers={providers} reload={loadModels} />}
+      {tab === 'members' && <MembersTab members={members} models={models} reload={loadMembers} />}
+      {tab === 'councils' && <CouncilsTab councils={councils} members={members} reload={loadCouncils} />}
     </div>
   )
 }
 
-/* ---------------- Providers ---------------- */
+/* ------------------------------------------------------------------ */
+/*  Providers                                                          */
+/* ------------------------------------------------------------------ */
 
-function ProvidersTab() {
-  const [providers, setProviders] = useState<ProviderDTO[]>([])
+function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload: () => void }) {
+  const [open, setOpen] = useState(false)
   const [presets, setPresets] = useState<Preset[]>([])
   const [name, setName] = useState('')
-  const [protocol, setProtocol] = useState('openai_compatible')
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
+  const [protocol, setProtocol] = useState<ProviderProtocol>('openai_compatible')
+  const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    apiGet<ProviderDTO[]>('/providers')
-      .then(setProviders)
-      .catch((e) => setError(String(e)))
+  useEffect(() => {
     apiGet<{ presets: Preset[] }>('/meta/providers')
       .then((m) => setPresets(m.presets))
       .catch(() => {})
   }, [])
 
-  useEffect(load, [load])
+  function resetForm() {
+    setName('')
+    setProtocol('openai_compatible')
+    setBaseUrl('')
+    setApiKey('')
+    setError(null)
+  }
 
-  async function add() {
+  async function save() {
+    setBusy(true)
     setError(null)
     try {
       await apiSend('/providers', 'POST', {
@@ -72,30 +111,74 @@ function ProvidersTab() {
         baseUrl: baseUrl || undefined,
         apiKey: apiKey || undefined,
       })
-      setName('')
-      setApiKey('')
-      load()
+      setOpen(false)
+      resetForm()
+      reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm('Delete provider and its models? Members using them will be disabled.')) return
+  async function handleDelete(id: string) {
     await apiSend(`/providers/${id}`, 'DELETE')
-    load()
+    reload()
+  }
+
+  async function handleTest(id: string) {
+    try {
+      const res = await apiSend<{ ok: boolean; latencyMs: number; message: string }>(`/providers/${id}/test`, 'POST')
+      alert(res.ok ? `✓ Connected (${res.latencyMs}ms)` : `✗ ${res.message}`)
+    } catch (e) {
+      alert(`Test failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   return (
     <div>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Add a provider (BYOK)</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Providers</h2>
+        <button className="primary" onClick={() => setOpen(true)}>
+          + Add Provider
+        </button>
+      </div>
+
+      {providers.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">⚙</div>
+          No providers configured. Add one to get started.
+        </div>
+      ) : (
+        <div className="grid-auto">
+          {providers.map((p) => (
+            <ProviderCard key={p.id} provider={p} onDelete={handleDelete} onTest={handleTest} />
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={open}
+        onClose={() => {
+          setOpen(false)
+          resetForm()
+        }}
+        title="Add Provider"
+        actions={
+          <>
+            <button onClick={() => setOpen(false)}>Cancel</button>
+            <button className="primary" onClick={save} disabled={busy || !name}>
+              {busy ? 'Adding…' : 'Add Provider'}
+            </button>
+          </>
+        }
+      >
         <label>Preset</label>
         <select
           onChange={(e) => {
             const p = presets.find((x) => x.key === e.target.value)
             if (p) {
-              setProtocol(p.protocol)
+              setProtocol(p.protocol as ProviderProtocol)
               setBaseUrl(p.baseUrl ?? '')
               setName(p.key.charAt(0).toUpperCase() + p.key.slice(1))
             }
@@ -114,63 +197,44 @@ function ProvidersTab() {
 
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="OpenAI" />
+
         <label>Protocol</label>
-        <select value={protocol} onChange={(e) => setProtocol(e.target.value)}>
+        <select value={protocol} onChange={(e) => setProtocol(e.target.value as ProviderProtocol)}>
           <option value="openai_compatible">OpenAI-compatible</option>
           <option value="anthropic">Anthropic</option>
           <option value="google">Google Gemini</option>
           <option value="mock">Mock</option>
         </select>
-        <label>Base URL (leave empty for protocol default)</label>
+
+        <label>Base URL</label>
         <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
-        <label>API key (encrypted at rest)</label>
+        <div className="input-hint">Leave empty for protocol default</div>
+
+        <label>API Key</label>
         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+        <div className="input-hint">Encrypted at rest with AES-256-GCM</div>
 
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name}>
-            Add provider
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Protocol</th>
-              <th>Base URL</th>
-              <th>Key</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {providers.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td>{p.protocol}</td>
-                <td style={{ color: 'var(--text-faint)' }}>{p.baseUrl ?? '(default)'}</td>
-                <td>{p.hasApiKey ? '🔒 stored' : '—'}</td>
-                <td>
-                  <button className="danger" onClick={() => remove(p.id)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
+      </Modal>
     </div>
   )
 }
 
-/* ---------------- Models ---------------- */
+/* ------------------------------------------------------------------ */
+/*  Models                                                             */
+/* ------------------------------------------------------------------ */
 
-function ModelsTab() {
-  const [providers, setProviders] = useState<ProviderDTO[]>([])
-  const [models, setModels] = useState<ModelDTO[]>([])
+function ModelsTab({
+  models,
+  providers,
+  reload,
+}: {
+  models: ModelDTO[]
+  providers: ProviderDTO[]
+  reload: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const [providerId, setProviderId] = useState('')
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -178,27 +242,25 @@ function ModelsTab() {
   const [inPrice, setInPrice] = useState('')
   const [outPrice, setOutPrice] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    apiGet<ProviderDTO[]>('/providers')
-      .then((ps) => {
-        setProviders(ps.filter((p) => p.enabled))
-        if (ps.length > 0 && !providerId) setProviderId(ps[0]!.id)
-      })
-      .catch((e) => setError(String(e)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const filtered = models.filter(
+    (m) =>
+      m.displayName.toLowerCase().includes(search.toLowerCase()) ||
+      m.modelId.toLowerCase().includes(search.toLowerCase()),
+  )
 
-  useEffect(() => {
-    load()
-  }, [load])
-  useEffect(() => {
-    apiGet<ModelDTO[]>('/models')
-      .then(setModels)
-      .catch(() => {})
-  }, [])
+  function resetForm() {
+    setModelId('')
+    setDisplayName('')
+    setCtx('128000')
+    setInPrice('')
+    setOutPrice('')
+    setError(null)
+  }
 
-  async function add() {
+  async function save() {
+    setBusy(true)
     setError(null)
     try {
       await apiSend('/models', 'POST', {
@@ -209,23 +271,69 @@ function ModelsTab() {
         inputPerMTokUsd: inPrice ? Number(inPrice) : null,
         outputPerMTokUsd: outPrice ? Number(outPrice) : null,
       })
-      setModelId('')
-      setDisplayName('')
-      apiGet<ModelDTO[]>('/models').then(setModels)
+      setOpen(false)
+      resetForm()
+      reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
-  async function remove(id: string) {
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this model? Members using it will be disabled.')) return
     await apiSend(`/models/${id}`, 'DELETE')
-    apiGet<ModelDTO[]>('/models').then(setModels)
+    reload()
   }
 
   return (
     <div>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Enroll a model</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Model Catalog</h2>
+        <button
+          className="primary"
+          onClick={() => {
+            if (providers.length > 0 && !providerId) setProviderId(providers[0]!.id)
+            setOpen(true)
+          }}
+        >
+          + Enroll Model
+        </button>
+      </div>
+
+      <SearchFilter search={search} onSearchChange={setSearch} placeholder="Search models by name or ID…" />
+
+      {filtered.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">◇</div>
+          {search ? 'No models match your search.' : 'No models enrolled. Add one to get started.'}
+        </div>
+      ) : (
+        <div className="grid-auto">
+          {filtered.map((m) => {
+            const prov = providers.find((p) => p.id === m.providerId)
+            return <ModelCard key={m.id} model={m} providerName={prov?.name} onDelete={handleDelete} />
+          })}
+        </div>
+      )}
+
+      <Modal
+        open={open}
+        onClose={() => {
+          setOpen(false)
+          resetForm()
+        }}
+        title="Enroll Model"
+        actions={
+          <>
+            <button onClick={() => setOpen(false)}>Cancel</button>
+            <button className="primary" onClick={save} disabled={busy || !providerId || !modelId}>
+              {busy ? 'Enrolling…' : 'Enroll Model'}
+            </button>
+          </>
+        }
+      >
         <label>Provider</label>
         <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
           {providers.map((p) => (
@@ -234,114 +342,147 @@ function ModelsTab() {
             </option>
           ))}
         </select>
+
         <label>Model ID (as the API expects it)</label>
         <input value={modelId} onChange={(e) => setModelId(e.target.value)} placeholder="gpt-4o" />
-        <label>Display name</label>
+
+        <label>Display Name</label>
         <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="GPT-4o" />
+
         <div className="grid-2">
           <div>
-            <label>Context window</label>
-            <input value={ctx} onChange={(e) => setCtx(e.target.value)} />
+            <label>Context Window</label>
+            <input value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="128000" />
           </div>
           <div>
-            <label>$/M tokens in / out (optional)</label>
+            <label>Pricing ($/M tokens)</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input value={inPrice} onChange={(e) => setInPrice(e.target.value)} placeholder="2.50" />
-              <input value={outPrice} onChange={(e) => setOutPrice(e.target.value)} placeholder="10.00" />
+              <input value={inPrice} onChange={(e) => setInPrice(e.target.value)} placeholder="In: 2.50" />
+              <input value={outPrice} onChange={(e) => setOutPrice(e.target.value)} placeholder="Out: 10" />
             </div>
           </div>
         </div>
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!providerId || !modelId}>
-            Enroll model
-          </button>
-        </div>
-      </div>
 
-      <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Display</th>
-              <th>Model ID</th>
-              <th>Context</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {models.map((m) => (
-              <tr key={m.id}>
-                <td>{m.displayName}</td>
-                <td style={{ color: 'var(--text-faint)' }}>{m.modelId}</td>
-                <td>{m.contextWindow ? m.contextWindow.toLocaleString() : '—'}</td>
-                <td>
-                  <button className="danger" onClick={() => remove(m.id)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
+      </Modal>
     </div>
   )
 }
 
-/* ---------------- Members ---------------- */
+/* ------------------------------------------------------------------ */
+/*  Members                                                            */
+/* ------------------------------------------------------------------ */
 
-const COLORS = ['#c9a227', '#4f86c6', '#a0522d', '#557a46', '#8e5ea2', '#b0413e']
-
-function MembersTab() {
-  const [members, setMembers] = useState<MemberDTO[]>([])
-  const [models, setModels] = useState<ModelDTO[]>([])
+function MembersTab({
+  members,
+  models,
+  reload,
+}: {
+  members: MemberDTO[]
+  models: ModelDTO[]
+  reload: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [modelId, setModelId] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [temperature, setTemperature] = useState('0.7')
   const [color, setColor] = useState(COLORS[0]!)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    apiGet<MemberDTO[]>('/members')
-      .then(setMembers)
-      .catch((e) => setError(String(e)))
-    apiGet<ModelDTO[]>('/models')
-      .then(setModels)
-      .catch(() => {})
-  }, [])
-  useEffect(load, [load])
+  function openAdd() {
+    setEditId(null)
+    setName('')
+    setModelId(models.length > 0 ? models[0]!.id : '')
+    setSystemPrompt('')
+    setTemperature('0.7')
+    setColor(COLORS[0]!)
+    setError(null)
+    setOpen(true)
+  }
 
-  async function add() {
+  function openEdit(m: MemberDTO) {
+    setEditId(m.id)
+    setName(m.name)
+    setModelId(m.modelId)
+    setSystemPrompt(m.systemPrompt || '')
+    setTemperature(String(m.temperature))
+    setColor(m.avatarColor)
+    setError(null)
+    setOpen(true)
+  }
+
+  async function save() {
+    setBusy(true)
     setError(null)
     try {
-      await apiSend('/members', 'POST', {
+      const payload = {
         name,
         modelId,
         systemPrompt: systemPrompt || null,
         temperature: Number(temperature),
         avatarColor: color,
-      })
-      setName('')
-      setSystemPrompt('')
-      load()
+      }
+      if (editId) {
+        await apiSend(`/members/${editId}`, 'PATCH', payload)
+      } else {
+        await apiSend('/members', 'POST', payload)
+      }
+      setOpen(false)
+      reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
-  async function remove(id: string) {
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this member?')) return
     await apiSend(`/members/${id}`, 'DELETE')
-    load()
+    reload()
   }
 
   return (
     <div>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Mint a member — a council seat bound to a model</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Council Members</h2>
+        <button className="primary" onClick={openAdd}>
+          + Add Member
+        </button>
+      </div>
+
+      {members.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">◈</div>
+          No members yet. Create one to assign to a council.
+        </div>
+      ) : (
+        <div className="grid-auto">
+          {members.map((m) => (
+            <MemberCard key={m.id} member={m} onDelete={handleDelete} onEdit={openEdit} />
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit Member' : 'Add Member'}
+        actions={
+          <>
+            <button onClick={() => setOpen(false)}>Cancel</button>
+            <button className="primary" onClick={save} disabled={busy || !name || !modelId}>
+              {busy ? 'Saving…' : editId ? 'Update' : 'Add Member'}
+            </button>
+          </>
+        }
+      >
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="The Strategist" />
+
         <label>Model</label>
         <select value={modelId} onChange={(e) => setModelId(e.target.value)}>
           <option value="" disabled>
@@ -353,245 +494,267 @@ function MembersTab() {
             </option>
           ))}
         </select>
-        <label>Persona system prompt</label>
+
+        <label>Persona System Prompt</label>
         <textarea
           rows={4}
           value={systemPrompt}
           onChange={(e) => setSystemPrompt(e.target.value)}
-          placeholder="You are The Strategist — you think in tradeoffs, second-order effects, and game theory…"
+          placeholder="You are The Strategist — you think in tradeoffs, second-order effects…"
         />
-        <div className="grid-2">
-          <div>
-            <label>Temperature ({temperature})</label>
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value={temperature}
-              onChange={(e) => setTemperature(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div>
-            <label>Color</label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {COLORS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setColor(c)}
-                  style={{
-                    background: c,
-                    width: 30,
-                    height: 30,
-                    borderRadius: 6,
-                    outline: color === c ? '2px solid var(--text)' : 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
-                  aria-label={`color ${c}`}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name || !modelId}>
-            Mint member
-          </button>
-        </div>
-      </div>
 
-      <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Member</th>
-              <th>Model</th>
-              <th>Provider</th>
-              <th>Temp</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {members.map((m) => (
-              <tr key={m.id}>
-                <td>
-                  <span style={{ color: m.avatarColor }}>●</span> {m.name}
-                </td>
-                <td>{m.modelName ?? '—'}</td>
-                <td style={{ color: 'var(--text-faint)' }}>{m.providerName ?? '—'}</td>
-                <td>{m.temperature}</td>
-                <td>
-                  <button className="danger" onClick={() => remove(m.id)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <label>Temperature: {temperature}</label>
+        <input
+          type="range"
+          min="0"
+          max="2"
+          step="0.1"
+          value={temperature}
+          onChange={(e) => setTemperature(e.target.value)}
+          style={{ width: '100%' }}
+        />
+
+        <label>Avatar Color</label>
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          {COLORS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setColor(c)}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: c,
+                border: color === c ? '2px solid white' : '2px solid transparent',
+                cursor: 'pointer',
+                padding: 0,
+                minHeight: 'unset',
+              }}
+            />
+          ))}
+        </div>
+
+        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
+      </Modal>
     </div>
   )
 }
 
-/* ---------------- Councils ---------------- */
+/* ------------------------------------------------------------------ */
+/*  Councils                                                           */
+/* ------------------------------------------------------------------ */
 
-function CouncilsTab() {
-  const [councils, setCouncils] = useState<CouncilDTO[]>([])
-  const [members, setMembers] = useState<MemberDTO[]>([])
+function CouncilsTab({
+  councils,
+  members,
+  reload,
+}: {
+  councils: CouncilDTO[]
+  members: MemberDTO[]
+  reload: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [strategy, setStrategy] = useState<StrategyKind>('debate')
-  const [rounds, setRounds] = useState(2)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [strategy, setStrategy] = useState<StrategyKind>('round_robin')
+  const [rounds, setRounds] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [moderatorId, setModeratorId] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    apiGet<CouncilDTO[]>('/councils')
-      .then(setCouncils)
-      .catch((e) => setError(String(e)))
-    apiGet<MemberDTO[]>('/members')
-      .then(setMembers)
-      .catch(() => {})
-  }, [])
-  useEffect(load, [load])
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const n = new Set(prev)
-      if (n.has(id)) n.delete(id)
-      else n.add(id)
-      return n
-    })
+  function openAdd() {
+    setEditId(null)
+    setName('')
+    setDescription('')
+    setStrategy('round_robin')
+    setRounds(1)
+    setSelectedIds([])
+    setModeratorId('')
+    setError(null)
+    setOpen(true)
   }
 
-  async function add() {
+  function openEdit(c: CouncilDTO) {
+    setEditId(c.id)
+    setName(c.name)
+    setDescription(c.description || '')
+    setStrategy(c.strategy)
+    setRounds(c.rounds)
+    setSelectedIds(c.members.map((m) => m.id))
+    setModeratorId(c.moderatorMemberId || '')
+    setError(null)
+    setOpen(true)
+  }
+
+  function toggleMember(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  async function save() {
+    setBusy(true)
     setError(null)
     try {
-      await apiSend('/councils', 'POST', {
+      const payload = {
         name,
         description: description || null,
         strategy,
         rounds,
-        memberIds: [...selected],
+        memberIds: selectedIds,
         moderatorMemberId: moderatorId || null,
-      })
-      setName('')
-      setDescription('')
-      setSelected(new Set())
-      setModeratorId('')
-      load()
+      }
+      if (editId) {
+        await apiSend(`/councils/${editId}`, 'PATCH', payload)
+      } else {
+        await apiSend('/councils', 'POST', payload)
+      }
+      setOpen(false)
+      reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm('Dissolve council? Session history is kept.')) return
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this council?')) return
     await apiSend(`/councils/${id}`, 'DELETE')
-    load()
+    reload()
   }
 
   return (
     <div>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Constitute a council</h2>
-        <label>Name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="War Council" />
-        <label>Description</label>
-        <input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Architecture decisions"
-        />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Councils</h2>
+        <button className="primary" onClick={openAdd}>
+          + Create Council
+        </button>
+      </div>
 
-        <label>Strategy</label>
-        <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKind)}>
-          <option value="debate">Debate — members see the transcript and rebut each other</option>
-          <option value="round_robin">Round-robin — independent positions each round</option>
-        </select>
-
-        <label>Rounds ({rounds})</label>
-        <input
-          type="range"
-          min="1"
-          max="5"
-          step="1"
-          value={rounds}
-          onChange={(e) => setRounds(Number(e.target.value))}
-        />
-
-        <label>Members (click to toggle)</label>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {members.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => toggle(m.id)}
-              className={selected.has(m.id) ? 'primary' : ''}
-              style={{ opacity: selected.has(m.id) ? 1 : 0.7 }}
-            >
-              {m.name}
-            </button>
+      {councils.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">🏛</div>
+          No councils configured. Create one to start deliberating.
+        </div>
+      ) : (
+        <div className="grid-auto">
+          {councils.map((c) => (
+            <CouncilCard key={c.id} council={c} onDelete={handleDelete} onEdit={openEdit} />
           ))}
         </div>
+      )}
 
-        <label>Moderator (writes the final synthesis; optional)</label>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit Council' : 'Create Council'}
+        actions={
+          <>
+            <button onClick={() => setOpen(false)}>Cancel</button>
+            <button className="primary" onClick={save} disabled={busy || !name || selectedIds.length === 0}>
+              {busy ? 'Saving…' : editId ? 'Update' : 'Create Council'}
+            </button>
+          </>
+        }
+      >
+        <label>Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Architecture Council" />
+
+        <label>Description</label>
+        <textarea
+          rows={2}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What this council is designed to deliberate on…"
+        />
+
+        <div className="grid-2">
+          <div>
+            <label>Strategy</label>
+            <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKind)}>
+              <option value="round_robin">↻ Round Robin</option>
+              <option value="debate">⚔ Debate</option>
+            </select>
+          </div>
+          <div>
+            <label>Rounds</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={rounds}
+              onChange={(e) => setRounds(Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <label>Members</label>
+        <div
+          style={{
+            maxHeight: 180,
+            overflowY: 'auto',
+            padding: 8,
+            background: 'var(--bg-inset)',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border)',
+          }}
+        >
+          {members.length === 0 ? (
+            <p className="muted" style={{ fontSize: '0.82rem', padding: 8 }}>
+              No members available. Create members first.
+            </p>
+          ) : (
+            members.map((m) => (
+              <label
+                key={m.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 4px',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(m.id)}
+                  onChange={() => toggleMember(m.id)}
+                  style={{ width: 'auto' }}
+                />
+                <span
+                  className="avatar sm"
+                  style={{ background: m.avatarColor, width: 20, height: 20, fontSize: '0.5rem' }}
+                >
+                  {m.name.slice(0, 2).toUpperCase()}
+                </span>
+                {m.name}
+                <span className="muted" style={{ fontSize: '0.75rem' }}>
+                  {m.modelName || ''}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+
+        <label>Moderator (optional)</label>
         <select value={moderatorId} onChange={(e) => setModeratorId(e.target.value)}>
-          <option value="">None — raw transcript only</option>
-          {[...selected].map((id) => {
-            const mem = members.find((x) => x.id === id)
-            return mem ? (
+          <option value="">None — no synthesis</option>
+          {selectedIds.map((id) => {
+            const m = members.find((x) => x.id === id)
+            return m ? (
               <option key={id} value={id}>
-                {mem.name}
+                {m.name}
               </option>
             ) : null
           })}
         </select>
+        <div className="input-hint">The moderator writes a final synthesis of the council&apos;s deliberation.</div>
 
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name || selected.size === 0}>
-            Constitute council
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Council</th>
-              <th>Strategy</th>
-              <th>Rounds</th>
-              <th>Members</th>
-              <th>Moderator</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {councils.map((c) => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td>{c.strategy}</td>
-                <td>{c.rounds}</td>
-                <td>{c.members.map((m) => m.name).join(', ')}</td>
-                <td style={{ color: 'var(--brass)' }}>
-                  {c.members.find((m) => m.id === c.moderatorMemberId)?.name ?? '—'}
-                </td>
-                <td>
-                  <button className="danger" onClick={() => remove(c.id)}>
-                    Dissolve
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
+      </Modal>
     </div>
   )
 }

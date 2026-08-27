@@ -5,8 +5,20 @@ import Link from 'next/link'
 import { apiGet } from '../lib/api'
 import type { SessionDTO } from '@opencouncil/shared'
 
+function timeAgo(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionDTO[]>([])
+  const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -19,59 +31,71 @@ export default function SessionsPage() {
     return () => clearInterval(t)
   }, [])
 
+  const filtered = sessions.filter((s) => s.topic.toLowerCase().includes(search.toLowerCase()))
+
   return (
     <div>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Operations</p>
-          <h1>Sessions</h1>
-          <p className="subtitle">Every deliberation, most recent first.</p>
+          <p className="eyebrow">Sessions</p>
+          <h1>Deliberation History</h1>
+          <p className="subtitle">Every council deliberation, most recent first.</p>
         </div>
         <Link className="btn primary" href="/">
-          + New session
+          + New Session
         </Link>
       </div>
+
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Topic</th>
-              <th>Council</th>
-              <th>Status</th>
-              <th>Messages</th>
-              <th>Started</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.length === 0 && (
-              <tr>
-                <td colSpan={5} className="empty">
-                  No sessions yet. Convene your first council.
-                </td>
-              </tr>
-            )}
-            {sessions.map((s) => (
-              <tr key={s.id}>
-                <td>
-                  <Link href={`/sessions/view/?id=${s.id}`}>
-                    {s.topic.slice(0, 80)}
-                    {s.topic.length > 80 ? '…' : ''}
-                  </Link>
-                </td>
-                <td>{s.councilName}</td>
-                <td>
-                  <span className={`badge ${s.status}`}>{s.status}</span>
-                </td>
-                <td>{s.messageCount ?? 0}</td>
-                <td style={{ color: 'var(--text-faint)' }}>
-                  {s.startedAt ? new Date(s.startedAt).toLocaleString() : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      <div className="search-bar" style={{ marginBottom: 20 }}>
+        <svg
+          className="search-icon"
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
+          <circle cx="7" cy="7" r="5" />
+          <path d="M12 12l-2.5-2.5" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Search sessions by topic…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
+
+      {filtered.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">◷</div>
+          {search ? 'No sessions match your search.' : 'No sessions yet. Convene your first council.'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filtered.map((s, i) => (
+            <Link
+              key={s.id}
+              href={`/sessions/view/?id=${s.id}`}
+              className="session-card"
+              style={{ animationDelay: `${i * 0.04}s` }}
+            >
+              <div className="session-topic">
+                {s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}
+              </div>
+              <div className="session-meta">
+                <span className={`badge ${s.status}`}>{s.status}</span>
+                <span>{s.councilName || 'Unknown council'}</span>
+                {s.messageCount != null && <span>{s.messageCount} msgs</span>}
+                <span>{s.createdAt ? timeAgo(s.createdAt) : ''}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
