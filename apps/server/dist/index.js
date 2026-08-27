@@ -1838,11 +1838,17 @@ function fitMessages(messages, budget) {
 
 // apps/server/src/engine/execution-policy.ts
 init_http();
-var DEFAULT_EXECUTION_POLICY = { maxRetries: 2, initialBackoffMs: 200, maxBackoffMs: 2e3 };
+var DEFAULT_EXECUTION_POLICY = { maxRetries: 3, initialBackoffMs: 1e3, maxBackoffMs: 8e3 };
 function isTemporaryProviderError(error) {
   if (error instanceof AuthError) return false;
   if (error instanceof RateLimitError || error instanceof TimeoutError) return true;
-  return error instanceof ProviderHttpError && (error.status === 408 || error.status === 429 || error.status >= 500);
+  if (error instanceof ProviderHttpError) {
+    if (error.status === 408 || error.status === 429 || error.status >= 500) return true;
+    if (error.status === 404 && (error.body?.includes("Provider returned error") || error.message.includes("Provider returned error"))) {
+      return true;
+    }
+  }
+  return false;
 }
 async function withRetry(operation, policy = DEFAULT_EXECUTION_POLICY, signal) {
   let retryCount = 0;
@@ -2400,7 +2406,7 @@ Now respond for Round ${round}. Speak directly to your council peers and advance
     const adapter = getAdapter(model.providerProtocol);
     const started = Date.now();
     try {
-      const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(4);
+      const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(2);
       this.providerLimits.set(model.providerId, semaphore);
       const attempted = await withRetry(
         () => semaphore.run(

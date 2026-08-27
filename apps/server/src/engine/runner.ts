@@ -414,7 +414,7 @@ export class SessionRunner {
     const adapter = getAdapter(model.providerProtocol)
     const started = Date.now()
     try {
-      const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(4)
+      const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(2)
       this.providerLimits.set(model.providerId, semaphore)
       const attempted = await withRetry(
         () =>

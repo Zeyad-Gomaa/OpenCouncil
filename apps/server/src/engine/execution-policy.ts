@@ -6,12 +6,22 @@ export interface ExecutionPolicy {
   maxBackoffMs: number
 }
 
-export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = { maxRetries: 2, initialBackoffMs: 200, maxBackoffMs: 2_000 }
+export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = { maxRetries: 3, initialBackoffMs: 1_000, maxBackoffMs: 8_000 }
 
 export function isTemporaryProviderError(error: unknown): boolean {
   if (error instanceof AuthError) return false
   if (error instanceof RateLimitError || error instanceof TimeoutError) return true
-  return error instanceof ProviderHttpError && (error.status === 408 || error.status === 429 || error.status >= 500)
+  if (error instanceof ProviderHttpError) {
+    if (error.status === 408 || error.status === 429 || error.status >= 500) return true
+    // OpenRouter returns 404 when an upstream provider (e.g. Nvidia) is temporarily down or unreachable
+    if (
+      error.status === 404 &&
+      (error.body?.includes('Provider returned error') || error.message.includes('Provider returned error'))
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 export async function withRetry<T>(
