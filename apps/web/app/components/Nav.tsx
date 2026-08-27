@@ -14,14 +14,25 @@ export default function Nav() {
   const pathname = usePathname()
   return (
     <nav className="sidenav">
-      <Link href="/" className="brand"><span className="brand-mark">OC</span> OpenCouncil</Link>
+      <Link href="/" className="brand">
+        <span className="brand-mark">OC</span> OpenCouncil
+      </Link>
       <div className="nav-label">Workspace</div>
       {ITEMS.map((it) => (
-        <Link key={it.href} href={it.href} className={`item ${pathname === it.href || (it.href !== '/' && pathname.startsWith(it.href)) ? 'active' : ''}`}>
-          <span className="nav-icon">{it.icon}</span>{it.label}
+        <Link
+          key={it.href}
+          href={it.href}
+          className={`item ${pathname === it.href || (it.href !== '/' && pathname.startsWith(it.href)) ? 'active' : ''}`}
+        >
+          <span className="nav-icon">{it.icon}</span>
+          {it.label}
         </Link>
       ))}
-      <div className="nav-footer">Private deliberation workspace<br />Self-hosted · BYOK</div>
+      <div className="nav-footer">
+        Private deliberation workspace
+        <br />
+        Self-hosted · BYOK
+      </div>
     </nav>
   )
 }

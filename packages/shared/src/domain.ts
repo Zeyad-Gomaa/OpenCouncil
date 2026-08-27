@@ -75,19 +75,24 @@ export interface MessageDTO {
 export interface UsageEventDTO {
   id: number
   sessionId: string
+  providerId: string | null
   memberName: string | null
+  memberId: string | null
   providerName: string | null
+  modelId: string | null
   modelName: string | null
   promptTokens: number
   completionTokens: number
   totalTokens: number
   costUsd: number | null
   latencyMs: number | null
+  retryCount: number
+  errorCode: string | null
   status: 'ok' | 'error'
   createdAt: string
 }
 
-export type MemberLiveStatus = 'idle' | 'thinking' | 'done' | 'error'
+export type MemberLiveStatus = 'queued' | 'thinking' | 'streaming' | 'completed' | 'failed'
 
 export interface SessionDTO {
   id: string

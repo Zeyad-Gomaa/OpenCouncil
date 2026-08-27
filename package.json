@@ -40,12 +40,18 @@
     "build:shared": "tsc -p packages/shared",
     "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
     "build:web": "next build apps/web && node scripts/copy-web.js",
-    "dev": "npm run build && concurrently -n council,web-dev -c green,cyan \"node apps/server/dist/cli.js\" \"next dev -p 3000 apps/web\"",
+    "dev": "npm run build:shared && npm run build:server && concurrently -n api,web -c magenta,cyan \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "node --watch apps/server/dist/index.js",
+    "dev:web": "next dev -p 3000 apps/web",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
-    "serve:api": "node apps/server/dist/index.js"
+    "serve:api": "node apps/server/dist/index.js",
+    "prepare": "node scripts/prepare.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
@@ -53,15 +59,21 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "concurrently": "^9.1.2",
     "esbuild": "^0.24.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "next": "^14.2.15",
+    "prettier": "^3.9.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^2.1.8"
   }
 }

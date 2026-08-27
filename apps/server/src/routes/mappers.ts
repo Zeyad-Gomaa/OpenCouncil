@@ -138,20 +138,18 @@ export function messageToDTO(r: {
   }
 }
 
-export function sessionToDTO(
-  r: {
-    id: string
-    council_id: string
-    topic: string
-    status: SessionDTO['status']
-    error: string | null
-    started_at: string | null
-    completed_at: string | null
-    created_at: string
-    council_name?: string
-    message_count?: number
-  },
-): SessionDTO {
+export function sessionToDTO(r: {
+  id: string
+  council_id: string
+  topic: string
+  status: SessionDTO['status']
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  council_name?: string
+  message_count?: number
+}): SessionDTO {
   return {
     id: r.id,
     councilId: r.council_id,
@@ -167,6 +165,8 @@ export function sessionToDTO(
 }
 
 export function logActivity(db: DB, action: string, detail?: unknown): void {
-  db.prepare('INSERT INTO activity_log (action, detail) VALUES (?, ?)')
-    .run(action, detail ? JSON.stringify(detail) : null)
+  db.prepare('INSERT INTO activity_log (action, detail) VALUES (?, ?)').run(
+    action,
+    detail ? JSON.stringify(detail) : null,
+  )
 }

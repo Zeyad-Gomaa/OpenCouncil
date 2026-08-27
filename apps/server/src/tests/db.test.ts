@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { migrate, openDatabase } from '../db/connection.js'
+import { migrate, openDatabase, recoverInterruptedSessions } from '../db/connection.js'
 import { seedDemoCouncil } from '../db/seed.js'
 import type { DB } from '../db/connection.js'
 
@@ -60,5 +60,35 @@ describe('seedDemoCouncil', () => {
     expect(c.moderator_member_id).toBeTruthy()
     const cm = db.prepare('SELECT COUNT(*) AS n FROM council_members').get() as { n: number }
     expect(cm.n).toBe(3)
+  })
+})
+
+describe('repairable model references', () => {
+  it('allows a model to be deleted while preserving and disabling its member', () => {
+    seedDemoCouncil(db)
+    const model = db.prepare('SELECT id FROM models LIMIT 1').get() as { id: string }
+    const member = db.prepare('SELECT id FROM members WHERE model_id = ?').get(model.id) as { id: string }
+    db.exec('BEGIN')
+    db.prepare('UPDATE members SET enabled = 0 WHERE model_id = ?').run(model.id)
+    db.prepare('DELETE FROM models WHERE id = ?').run(model.id)
+    db.exec('COMMIT')
+    expect(db.prepare('SELECT model_id, enabled FROM members WHERE id = ?').get(member.id)).toEqual({
+      model_id: null,
+      enabled: 0,
+    })
+  })
+})
+
+describe('restart recovery', () => {
+  it('marks queued and running sessions failed with a clear reason', () => {
+    seedDemoCouncil(db)
+    const council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }
+    db.prepare(
+      "INSERT INTO sessions (id,council_id,topic,status) VALUES ('q',?,'q','queued'),('r',?,'r','running')",
+    ).run(council.id, council.id)
+    expect(recoverInterruptedSessions(db)).toBe(2)
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status='failed' AND error LIKE 'process restarted%'").get(),
+    ).toEqual({ n: 2 })
   })
 })

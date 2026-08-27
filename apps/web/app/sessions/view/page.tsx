@@ -10,6 +10,7 @@ interface Snapshot {
   session: SessionDTO
   messages: MessageDTO[]
   usage: { calls: number; tokens: number; cost: number }
+  lastEventSequence: number
 }
 
 interface LiveUsage {
@@ -19,10 +20,11 @@ interface LiveUsage {
 }
 
 const STATUS_LABEL: Record<MemberLiveStatus, string> = {
-  idle: 'awaiting',
+  queued: 'awaiting',
   thinking: 'deliberating…',
-  done: 'done',
-  error: 'error',
+  streaming: 'writing…',
+  completed: 'done',
+  failed: 'error',
 }
 
 export default function ChamberPage() {
@@ -40,6 +42,7 @@ function ChamberContent() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [messages, setMessages] = useState<MessageDTO[]>([])
   const [memberStatus, setMemberStatus] = useState<Record<string, MemberLiveStatus>>({})
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({})
   const [liveUsage, setLiveUsage] = useState<LiveUsage>({ calls: 0, tokens: 0, costUsd: 0 })
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -71,8 +74,13 @@ function ChamberContent() {
           )
           if (!cancelled) {
             const st: Record<string, MemberLiveStatus> = {}
-            for (const mem of council.members) st[mem.name] = 'idle'
+            const names: Record<string, string> = {}
+            for (const mem of council.members) {
+              st[mem.id] = 'queued'
+              names[mem.id] = mem.name
+            }
             setMemberStatus(st)
+            setMemberNames(names)
           }
         } catch {
           /* council may be gone; rail optional */
@@ -80,7 +88,7 @@ function ChamberContent() {
 
         if (['completed', 'failed', 'cancelled'].includes(snap.session.status)) return
 
-        es = new EventSource(`/api/v1/sessions/${sessionId}/events`)
+        es = new EventSource(`/api/v1/sessions/${sessionId}/events?after=${snap.lastEventSequence}`)
         es.onmessage = (ev) => {
           let event: CouncilEvent & { message?: MessageDTO }
           try {
@@ -93,24 +101,32 @@ function ChamberContent() {
               setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'running' } })
               break
             case 'member.started':
-              setMemberStatus((st) => ({ ...st, [event.memberName]: 'thinking' }))
+              setMemberStatus((st) => ({ ...st, [event.memberId]: 'thinking' }))
               break
-            case 'message.replay':
             case 'message.created':
               if (event.message) {
                 mergeMessage(event.message)
                 if (event.message.kind !== 'system' && event.message.role === 'assistant') {
-                  setMemberStatus((st) => ({ ...st, [event.message!.memberName]: 'done' }))
-                  const u = event.message.usage
-                  if (u) {
-                    setLiveUsage((lu) => ({
-                      calls: lu.calls + 1,
-                      tokens: lu.tokens + (u.totalTokens ?? 0),
-                      costUsd: lu.costUsd + (u.costUsd ?? 0),
-                    }))
-                  }
+                  if (event.message.memberId)
+                    setMemberStatus((st) => ({ ...st, [event.message!.memberId!]: 'completed' }))
                 }
               }
+              break
+            case 'message.replay':
+              if (event.message) mergeMessage(event.message)
+              break
+            case 'member.completed':
+              setMemberStatus((st) => ({ ...st, [event.memberId]: 'completed' }))
+              break
+            case 'member.failed':
+              setMemberStatus((st) => ({ ...st, [event.memberId]: 'failed' }))
+              break
+            case 'usage.recorded':
+              setLiveUsage((current) => ({
+                calls: current.calls + 1,
+                tokens: current.tokens + event.usage.totalTokens,
+                costUsd: current.costUsd + (event.usage.costUsd ?? 0),
+              }))
               break
             case 'synthesis.completed':
               if (event.message) mergeMessage(event.message)
@@ -160,9 +176,14 @@ function ChamberContent() {
   return (
     <div>
       <div className="page-header">
-        <div><p className="eyebrow">Live session</p><h1 style={{ flex: 1 }}>Deliberation</h1></div>
+        <div>
+          <p className="eyebrow">Live session</p>
+          <h1 style={{ flex: 1 }}>Deliberation</h1>
+        </div>
         {running && (
-          <button className="danger" onClick={cancel}>Cancel session</button>
+          <button className="danger" onClick={cancel}>
+            Cancel session
+          </button>
         )}
       </div>
       <p className="subtitle">
@@ -180,8 +201,8 @@ function ChamberContent() {
 
       {/* Member rail */}
       <div className="stat-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-        {Object.entries(memberStatus).map(([name, st]) => (
-          <div key={name} className="stat-card" style={{ padding: '10px 14px' }}>
+        {Object.entries(memberStatus).map(([id, st]) => (
+          <div key={id} className="stat-card" style={{ padding: '10px 14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span
                 className="dot"
@@ -191,10 +212,16 @@ function ChamberContent() {
                   height: 9,
                   borderRadius: '50%',
                   background:
-                    st === 'thinking' ? 'var(--brass)' : st === 'done' ? 'var(--ok)' : st === 'error' ? 'var(--danger)' : 'var(--text-faint)',
+                    st === 'thinking' || st === 'streaming'
+                      ? 'var(--brass)'
+                      : st === 'completed'
+                        ? 'var(--ok)'
+                        : st === 'failed'
+                          ? 'var(--danger)'
+                          : 'var(--text-faint)',
                 }}
               />
-              <span style={{ fontSize: '0.92rem' }}>{name}</span>
+              <span style={{ fontSize: '0.92rem' }}>{memberNames[id] ?? id}</span>
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 3 }}>{STATUS_LABEL[st]}</div>
           </div>
@@ -203,7 +230,13 @@ function ChamberContent() {
 
       {/* Synthesis pinned */}
       {synthesis && (
-        <div className="card" style={{ borderColor: 'var(--brass)', background: 'linear-gradient(180deg, rgba(201,162,39,0.07), transparent)' }}>
+        <div
+          className="card"
+          style={{
+            borderColor: 'var(--brass)',
+            background: 'linear-gradient(180deg, rgba(201,162,39,0.07), transparent)',
+          }}
+        >
           <h2 style={{ margin: '0 0 10px' }}>⚖ Synthesis — the council&apos;s answer</h2>
           <TranscriptBody content={synthesis.content} />
           <MessageMeta m={synthesis} />
@@ -215,9 +248,15 @@ function ChamberContent() {
         <div key={round}>
           <h2>{round === 0 ? 'The Question' : `Round ${round}`}</h2>
           {[...discussion.filter((m) => m.round === round)].map((m) => (
-            <div key={m.id} className="card" style={m.kind === 'user' ? { borderLeft: '3px solid var(--accent-blue)' } : undefined}>
+            <div
+              key={m.id}
+              className="card"
+              style={m.kind === 'user' ? { borderLeft: '3px solid var(--accent-blue)' } : undefined}
+            >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <strong style={{ color: m.kind === 'user' ? 'var(--accent-blue)' : 'var(--brass)' }}>{m.memberName}</strong>
+                <strong style={{ color: m.kind === 'user' ? 'var(--accent-blue)' : 'var(--brass)' }}>
+                  {m.memberName}
+                </strong>
                 <MessageMeta m={m} />
               </div>
               <TranscriptBody content={m.content} />
@@ -228,7 +267,9 @@ function ChamberContent() {
 
       {running && <p style={{ color: 'var(--text-faint)' }}>The council is deliberating…</p>}
       {!running && !synthesis && session?.status === 'completed' && (
-        <p style={{ color: 'var(--text-faint)' }}>Session complete. No moderator synthesis was configured for this council.</p>
+        <p style={{ color: 'var(--text-faint)' }}>
+          Session complete. No moderator synthesis was configured for this council.
+        </p>
       )}
 
       {/* Usage footer */}
@@ -270,8 +311,6 @@ function MessageMeta({ m }: { m: MessageDTO }) {
 
 function TranscriptBody({ content }: { content: string }) {
   return (
-    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55, fontSize: '0.95rem' }}>
-      {content.replace(/\*\*/g, '')}
-    </div>
+    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55, fontSize: '0.95rem' }}>{content.replace(/\*\*/g, '')}</div>
   )
 }

@@ -18,9 +18,7 @@ export interface DB {
   prepare(sql: string): StatementSync
 }
 
-const getBuiltinModule = (
-  process as typeof process & { getBuiltinModule(id: string): unknown }
-).getBuiltinModule
+const getBuiltinModule = (process as typeof process & { getBuiltinModule(id: string): unknown }).getBuiltinModule
 const { DatabaseSync } = getBuiltinModule('node:sqlite') as {
   DatabaseSync: new (location: string) => DB
 }
@@ -146,6 +144,59 @@ CREATE TABLE settings_kv (
 );
 `,
   },
+  {
+    version: 2,
+    name: 'historical-snapshots-and-usage-identifiers',
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v1;
+ALTER TABLE members RENAME TO members_v1;
+CREATE TABLE members (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+  system_prompt TEXT,
+  temperature REAL NOT NULL DEFAULT 0.7,
+  max_tokens INTEGER,
+  avatar_color TEXT NOT NULL DEFAULT '#c9a227',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO members SELECT * FROM members_v1;
+DROP TABLE members_v1;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v1;
+DROP TABLE council_members_v1;
+ALTER TABLE sessions ADD COLUMN snapshot_json TEXT;
+ALTER TABLE usage_events ADD COLUMN provider_id TEXT;
+ALTER TABLE usage_events ADD COLUMN model_id TEXT;
+ALTER TABLE usage_events ADD COLUMN member_id TEXT;
+ALTER TABLE messages ADD COLUMN round_position INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_usage_session ON usage_events(session_id);
+CREATE TABLE session_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(session_id, sequence)
+);
+CREATE INDEX idx_session_events_sequence ON session_events(session_id, sequence);
+`,
+  },
+  {
+    version: 3,
+    name: 'usage-retries-and-errors',
+    sql: `
+ALTER TABLE usage_events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN error_code TEXT;
+`,
+  },
 ]
 
 export function migrate(db: DB): void {
@@ -165,4 +216,13 @@ export function migrate(db: DB): void {
       throw error
     }
   }
+}
+
+export function recoverInterruptedSessions(db: DB): number {
+  const result = db
+    .prepare(
+      `UPDATE sessions SET status='failed', error='process restarted before session completed', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('queued','running')`,
+    )
+    .run()
+  return Number(result.changes)
 }

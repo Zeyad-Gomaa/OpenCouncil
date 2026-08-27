@@ -121,6 +121,23 @@ describe('council end-to-end', () => {
     expect(body.byMember.length).toBeGreaterThan(0)
   })
 
+  it('keeps session history viewable after its council is deleted', async () => {
+    const council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { councilId: council.id, topic: 'snapshot test' },
+    })
+    const sessionId = create.json().id
+    await waitForSessionCompletion(sessionId)
+    const deleted = await app.inject({ method: 'DELETE', url: `/api/v1/councils/${council.id}` })
+    expect(deleted.statusCode).toBe(200)
+    const history = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}` })
+    expect(history.statusCode).toBe(200)
+    expect(history.json().session.councilName).toBeTruthy()
+    expect(history.json().messages.length).toBeGreaterThan(0)
+  })
+
   it('rejects invalid payloads with error envelope', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/v1/sessions', payload: { councilId: 'nope' } })
     expect(res.statusCode).toBeGreaterThanOrEqual(400)
@@ -133,7 +150,12 @@ describe('council end-to-end', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/v1/providers',
-      payload: { name: 'OpenAI Test', protocol: 'openai_compatible', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-litmus-123' },
+      payload: {
+        name: 'OpenAI Test',
+        protocol: 'openai_compatible',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-litmus-123',
+      },
     })
     expect(created.statusCode).toBe(201)
     const dto = created.json()
@@ -147,5 +169,25 @@ describe('council end-to-end', () => {
 
     const del = await app.inject({ method: 'DELETE', url: `/api/v1/providers/${dto.id}` })
     expect(del.statusCode).toBe(200)
+  })
+
+  it('round-trips a config export through import and rejects malformed payloads with 400', async () => {
+    const exported = await app.inject({ method: 'GET', url: '/api/v1/config/export' })
+    expect(exported.statusCode).toBe(200)
+    const config = exported.json()
+    expect(JSON.stringify(config)).not.toContain('api_key_encrypted')
+
+    const reimported = await app.inject({ method: 'POST', url: '/api/v1/config/import', payload: config })
+    expect(reimported.statusCode).toBe(200)
+    expect(reimported.json().secretsImported).toBe(false)
+
+    // Previously a bad row reached SQLite and surfaced as an opaque 500.
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/v1/config/import',
+      payload: { providers: [], models: [{ id: 'not-a-uuid', providerId: 'nope' }], members: [], councils: [] },
+    })
+    expect(bad.statusCode).toBe(400)
+    expect(bad.json().error.code).toBe('invalid_config')
   })
 })

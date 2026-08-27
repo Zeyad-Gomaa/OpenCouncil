@@ -1,4 +1,8 @@
-/** Server base URL for browser calls — same-origin via Next rewrite. */
+/** Server base URL for browser calls.
+ *
+ * Relative on purpose: in production Fastify serves the static UI and the API
+ * from one origin, and `next dev` proxies /api to the API port (next.config.js).
+ */
 export const API = '/api/v1'
 
 async function handle<T>(res: Response): Promise<T> {

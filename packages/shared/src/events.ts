@@ -4,10 +4,11 @@ import type { MessageDTO, UsageEventDTO } from './domain.js'
 export type CouncilEvent =
   | { type: 'session.started'; sessionId: string }
   | { type: 'round.started'; sessionId: string; round: number }
-  | { type: 'member.started'; sessionId: string; round: number; memberName: string }
+  | { type: 'member.started'; sessionId: string; round: number; memberId: string; memberName: string }
   | { type: 'message.replay'; sessionId: string; message: MessageDTO }
   | { type: 'message.created'; sessionId: string; message: MessageDTO }
-  | { type: 'member.completed'; sessionId: string; round: number; memberName: string }
+  | { type: 'member.completed'; sessionId: string; round: number; memberId: string; memberName: string }
+  | { type: 'member.failed'; sessionId: string; round: number; memberId: string; memberName: string; error: string }
   | { type: 'round.completed'; sessionId: string; round: number }
   | { type: 'moderator.started'; sessionId: string }
   | { type: 'synthesis.completed'; sessionId: string; message: MessageDTO }

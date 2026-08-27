@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { apiGet, apiSend } from '../lib/api'
+import { apiGet } from '../lib/api'
 import type { ActivityStats, GroupedUsage } from '@opencouncil/shared'
 
 interface StatsResponse extends ActivityStats {
@@ -39,7 +39,13 @@ export default function ActivityPage() {
 
   return (
     <div>
-      <div className="page-header"><div><p className="eyebrow">Observability</p><h1>Usage & activity</h1><p className="subtitle">Usage across the last 30 days — every token metered, every action logged.</p></div></div>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">Observability</p>
+          <h1>Usage & activity</h1>
+          <p className="subtitle">Usage across the last 30 days — every token metered, every action logged.</p>
+        </div>
+      </div>
 
       <div className="stat-row">
         <Stat label="Sessions" value={String(stats.totals.sessions)} />
@@ -81,11 +87,18 @@ export default function ActivityPage() {
       <div className="card">
         <table>
           <thead>
-            <tr><th>When</th><th>Action</th></tr>
+            <tr>
+              <th>When</th>
+              <th>Action</th>
+            </tr>
           </thead>
           <tbody>
             {stats.recentLog.length === 0 && (
-              <tr><td colSpan={2} style={{ color: 'var(--text-faint)' }}>Nothing logged yet.</td></tr>
+              <tr>
+                <td colSpan={2} style={{ color: 'var(--text-faint)' }}>
+                  Nothing logged yet.
+                </td>
+              </tr>
             )}
             {stats.recentLog.map((e) => (
               <tr key={e.id}>
@@ -124,14 +137,29 @@ function Breakdown({ title, rows }: { title: string; rows: GroupedUsage[] }) {
       ) : (
         <table>
           <thead>
-            <tr><th>Name</th><th>Tokens</th><th>Calls</th><th>Cost</th></tr>
+            <tr>
+              <th>Name</th>
+              <th>Tokens</th>
+              <th>Calls</th>
+              <th>Cost</th>
+            </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.name}>
                 <td>{r.name}</td>
                 <td>
-                  <span style={{ display: 'inline-block', width: `${(r.tokens / maxTok) * 60 + 20}px`, background: 'var(--brass)', opacity: 0.5, height: 10, borderRadius: 3, marginRight: 8 }} />
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: `${(r.tokens / maxTok) * 60 + 20}px`,
+                      background: 'var(--brass)',
+                      opacity: 0.5,
+                      height: 10,
+                      borderRadius: 3,
+                      marginRight: 8,
+                    }}
+                  />
                   {r.tokens.toLocaleString()}
                 </td>
                 <td>{r.messages}</td>

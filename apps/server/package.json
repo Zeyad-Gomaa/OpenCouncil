@@ -1,32 +1,13 @@
 {
   "name": "@opencouncil/server",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
+  "description": "OpenCouncil server + CLI. Built and published as part of the root `opencouncil` package; this manifest ships alongside dist/ so Node treats the bundle as ESM.",
   "type": "module",
-  "description": "OpenCouncil server + CLI: convene your LLMs as a council.",
-  "license": "MIT",
   "main": "./dist/index.js",
-  "bin": {
-    "opencouncil": "./dist/cli.js"
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "dev": "tsc --watch --preserveWatchOutput",
-    "build": "tsc -p tsconfig.json",
+    "build": "npm --prefix ../.. run build:server",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/cli.js",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "@opencouncil/shared": "*",
-    "fastify": "^4.28.1",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
-    "@types/node": "^20.14.10",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
   }
 }

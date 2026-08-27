@@ -13,7 +13,10 @@ export const anthropicAdapter: ProviderAdapter = {
   defaultBaseUrl: 'https://api.anthropic.com',
 
   async chat(opts: ChatCallOpts): Promise<ChatResult> {
-    const system = opts.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+    const system = opts.messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n\n')
     const rest = opts.messages.filter((m) => m.role !== 'system')
 
     const data = await httpJson<AnthropicResponse>(`${opts.baseUrl.replace(/\/$/, '')}/v1/messages`, {

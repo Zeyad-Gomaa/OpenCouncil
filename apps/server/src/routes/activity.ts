@@ -20,7 +20,15 @@ export function registerActivityRoutes(app: FastifyInstance, db: DB): void {
            SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors
          FROM usage_events`,
       )
-      .get() as { sessions: number; messages: number; promptTokens: number; completionTokens: number; totalTokens: number; costUsd: number; errors: number }
+      .get() as {
+      sessions: number
+      messages: number
+      promptTokens: number
+      completionTokens: number
+      totalTokens: number
+      costUsd: number
+      errors: number
+    }
 
     const daily = db
       .prepare(

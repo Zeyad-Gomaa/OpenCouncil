@@ -17,8 +17,7 @@ export function mapProviderError(err: unknown): AppError {
   if (err instanceof AuthError) return new AppError(401, 'provider_auth', err.message)
   if (err instanceof RateLimitError) return new AppError(429, 'provider_rate_limit', err.message)
   if (err instanceof TimeoutError) return new AppError(504, 'provider_timeout', err.message)
-  if (err instanceof ProviderHttpError)
-    return new AppError(502, 'provider_http', err.message, { status: err.status })
+  if (err instanceof ProviderHttpError) return new AppError(502, 'provider_http', err.message, { status: err.status })
   if (err instanceof AppError) return err
   return new AppError(500, 'internal', err instanceof Error ? err.message : 'unknown error')
 }

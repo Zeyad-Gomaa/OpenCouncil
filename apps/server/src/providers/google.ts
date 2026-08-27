@@ -15,7 +15,10 @@ export const googleAdapter: ProviderAdapter = {
   async chat(opts: ChatCallOpts): Promise<ChatResult> {
     const base = opts.baseUrl.replace(/\/$/, '')
     const url = `${base}/v1beta/models/${encodeURIComponent(opts.modelId)}:generateContent`
-    const system = opts.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+    const system = opts.messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n\n')
     const contents = opts.messages
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }))

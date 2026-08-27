@@ -1,7 +1,8 @@
 /** OpenCouncil server entrypoint. */
+import { loadEnvFile } from './env.js'
 import { loadConfig } from './config.js'
 import { initVault } from './vault/crypto.js'
-import { migrate, openDatabase } from './db/connection.js'
+import { migrate, openDatabase, recoverInterruptedSessions } from './db/connection.js'
 import { seedDemoCouncil } from './db/seed.js'
 import { SessionBus } from './engine/bus.js'
 import { SessionRunner } from './engine/runner.js'
@@ -9,11 +10,14 @@ import { SessionManager } from './engine/session-manager.js'
 import { makeRunnerDbHelpers, buildApp } from './app.js'
 
 async function main(): Promise<void> {
+  loadEnvFile()
   const config = loadConfig()
   initVault(config.secretKey)
 
   const db = openDatabase(config)
   migrate(db)
+  const interrupted = recoverInterruptedSessions(db)
+  if (interrupted) console.warn(`[opencouncil] marked ${interrupted} interrupted session(s) failed after restart`)
   if (config.seedDemoCouncil && seedDemoCouncil(db)) {
     console.log('[opencouncil] seeded demo council (mock provider)')
   }
@@ -23,7 +27,14 @@ async function main(): Promise<void> {
     )
   }
 
-  const bus = new SessionBus()
+  const bus = new SessionBus((event, sequence) => {
+    db.prepare('INSERT INTO session_events (session_id, sequence, type, payload_json) VALUES (?, ?, ?, ?)').run(
+      event.sessionId,
+      sequence,
+      event.type,
+      JSON.stringify(event),
+    )
+  })
   const helpers = makeRunnerDbHelpers(db)
   const runner = new SessionRunner({
     bus,

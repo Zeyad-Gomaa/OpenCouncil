@@ -4,7 +4,9 @@
 const fs = require('node:fs')
 const { execSync } = require('node:child_process')
 
-if (fs.existsSync('apps/server/dist/cli.js') && fs.existsSync('apps/web/out/index.html')) {
+// `apps/server/dist/public` is what actually ships and gets served; the
+// intermediate `apps/web/out` is not published, so don't gate on it.
+if (fs.existsSync('apps/server/dist/cli.js') && fs.existsSync('apps/server/dist/public/index.html')) {
   console.log('[opencouncil] prebuilt artifacts present — skipping build')
 } else {
   console.log('[opencouncil] building…')

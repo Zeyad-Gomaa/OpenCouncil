@@ -50,30 +50,93 @@ export const memberUpdateSchema = memberCreateSchema.partial()
 
 export const strategyKindSchema = z.enum(['round_robin', 'debate'])
 
-export const councilCreateSchema = z.object({
-  name: z.string().min(1).max(80),
-  description: z.string().max(500).nullish(),
-  strategy: strategyKindSchema,
-  rounds: z.number().int().min(1).max(10),
-  memberIds: z.array(z.string().uuid()).min(1).max(12),
-  moderatorMemberId: z.string().uuid().nullish(),
-})
+export const councilCreateSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    description: z.string().max(500).nullish(),
+    strategy: strategyKindSchema,
+    rounds: z.number().int().min(1).max(10),
+    memberIds: z.array(z.string().uuid()).min(1).max(12),
+    moderatorMemberId: z.string().uuid().nullish(),
+  })
   .refine((c) => !c.moderatorMemberId || c.memberIds.includes(c.moderatorMemberId), {
     message: 'moderator must be one of the council members',
   })
 
-export const councilUpdateSchema = z.object({
-  name: z.string().min(1).max(80).optional(),
-  description: z.string().max(500).nullable().optional(),
-  strategy: strategyKindSchema.optional(),
-  rounds: z.number().int().min(1).max(10).optional(),
-  memberIds: z.array(z.string().uuid()).min(1).max(12).optional(),
-  moderatorMemberId: z.string().uuid().nullable().optional(),
-}).refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
-  message: 'moderator must be one of the council members',
-})
+export const councilUpdateSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    description: z.string().max(500).nullable().optional(),
+    strategy: strategyKindSchema.optional(),
+    rounds: z.number().int().min(1).max(10).optional(),
+    memberIds: z.array(z.string().uuid()).min(1).max(12).optional(),
+    moderatorMemberId: z.string().uuid().nullable().optional(),
+  })
+  .refine((c) => !c.moderatorMemberId || (c.memberIds ? c.memberIds.includes(c.moderatorMemberId) : true), {
+    message: 'moderator must be one of the council members',
+  })
 
 export const sessionCreateSchema = z.object({
   councilId: z.string().uuid(),
   topic: z.string().min(1).max(8_000),
 })
+
+/** Shape of `GET /config/export`, re-validated on import.
+ *
+ * Distinct from the create schemas because these rows carry their own ids: an
+ * import restores an existing configuration rather than minting a new one.
+ * Secrets are deliberately absent — exports only ever record `hasSecret`.
+ */
+export const configImportSchema = z.object({
+  version: z.literal(1).optional(),
+  providers: z.array(
+    z.object({
+      id: z.string().uuid(),
+      name: z.string().min(1).max(80),
+      protocol: providerProtocolSchema,
+      baseUrl: z.string().url().nullish(),
+      defaultModelId: z.string().max(200).nullish(),
+      enabled: z.coerce.boolean().optional(),
+    }),
+  ),
+  models: z.array(
+    z.object({
+      id: z.string().uuid(),
+      providerId: z.string().uuid(),
+      modelId: z.string().min(1).max(200),
+      displayName: z.string().min(1).max(120),
+      contextWindow: z.number().int().positive().max(100_000_000).nullish(),
+      inputPerMTokUsd: z.number().nonnegative().nullish(),
+      outputPerMTokUsd: z.number().nonnegative().nullish(),
+      enabled: z.coerce.boolean().optional(),
+    }),
+  ),
+  members: z.array(
+    z.object({
+      id: z.string().uuid(),
+      name: z.string().min(1).max(60),
+      modelId: z.string().uuid().nullish(),
+      systemPrompt: z.string().max(20_000).nullish(),
+      temperature: z.number().min(0).max(2).optional(),
+      maxTokens: z.number().int().positive().max(200_000).nullish(),
+      avatarColor: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .optional(),
+      enabled: z.coerce.boolean().optional(),
+    }),
+  ),
+  councils: z.array(
+    z.object({
+      id: z.string().uuid(),
+      name: z.string().min(1).max(80),
+      description: z.string().max(500).nullish(),
+      strategy: strategyKindSchema.optional(),
+      rounds: z.number().int().min(1).max(10).optional(),
+      memberIds: z.array(z.string().uuid()).max(12).optional(),
+      moderatorMemberId: z.string().uuid().nullish(),
+    }),
+  ),
+})
+
+export type ConfigImport = z.infer<typeof configImportSchema>

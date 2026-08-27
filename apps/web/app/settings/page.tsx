@@ -17,7 +17,13 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <div className="page-header"><div><p className="eyebrow">Administration</p><h1>Configuration</h1><p className="subtitle">Manage providers, models, members, and council protocols.</p></div></div>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h1>Configuration</h1>
+          <p className="subtitle">Manage providers, models, members, and council protocols.</p>
+        </div>
+      </div>
 
       <div className="tabs">
         {(['providers', 'models', 'members', 'councils'] as Tab[]).map((t) => (
@@ -47,8 +53,12 @@ function ProvidersTab() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    apiGet<ProviderDTO[]>('/providers').then(setProviders).catch((e) => setError(String(e)))
-    apiGet<{ presets: Preset[] }>('/meta/providers').then((m) => setPresets(m.presets)).catch(() => {})
+    apiGet<ProviderDTO[]>('/providers')
+      .then(setProviders)
+      .catch((e) => setError(String(e)))
+    apiGet<{ presets: Preset[] }>('/meta/providers')
+      .then((m) => setPresets(m.presets))
+      .catch(() => {})
   }, [])
 
   useEffect(load, [load])
@@ -62,7 +72,8 @@ function ProvidersTab() {
         baseUrl: baseUrl || undefined,
         apiKey: apiKey || undefined,
       })
-      setName(''); setApiKey('')
+      setName('')
+      setApiKey('')
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -91,9 +102,13 @@ function ProvidersTab() {
           }}
           defaultValue=""
         >
-          <option value="" disabled>Choose a preset…</option>
+          <option value="" disabled>
+            Choose a preset…
+          </option>
           {presets.map((p) => (
-            <option key={p.key} value={p.key}>{p.key}</option>
+            <option key={p.key} value={p.key}>
+              {p.key}
+            </option>
           ))}
         </select>
 
@@ -113,13 +128,23 @@ function ProvidersTab() {
 
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name}>Add provider</button>
+          <button className="primary" onClick={add} disabled={!name}>
+            Add provider
+          </button>
         </div>
       </div>
 
       <div className="card">
         <table>
-          <thead><tr><th>Name</th><th>Protocol</th><th>Base URL</th><th>Key</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Protocol</th>
+              <th>Base URL</th>
+              <th>Key</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {providers.map((p) => (
               <tr key={p.id}>
@@ -127,7 +152,11 @@ function ProvidersTab() {
                 <td>{p.protocol}</td>
                 <td style={{ color: 'var(--text-faint)' }}>{p.baseUrl ?? '(default)'}</td>
                 <td>{p.hasApiKey ? '🔒 stored' : '—'}</td>
-                <td><button className="danger" onClick={() => remove(p.id)}>Delete</button></td>
+                <td>
+                  <button className="danger" onClick={() => remove(p.id)}>
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -151,16 +180,22 @@ function ModelsTab() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    apiGet<ProviderDTO[]>('/providers').then((ps) => {
-      setProviders(ps.filter((p) => p.enabled))
-      if (ps.length > 0 && !providerId) setProviderId(ps[0]!.id)
-    }).catch((e) => setError(String(e)))
+    apiGet<ProviderDTO[]>('/providers')
+      .then((ps) => {
+        setProviders(ps.filter((p) => p.enabled))
+        if (ps.length > 0 && !providerId) setProviderId(ps[0]!.id)
+      })
+      .catch((e) => setError(String(e)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => { load() }, [load])
   useEffect(() => {
-    apiGet<ModelDTO[]>('/models').then(setModels).catch(() => {})
+    load()
+  }, [load])
+  useEffect(() => {
+    apiGet<ModelDTO[]>('/models')
+      .then(setModels)
+      .catch(() => {})
   }, [])
 
   async function add() {
@@ -174,7 +209,8 @@ function ModelsTab() {
         inputPerMTokUsd: inPrice ? Number(inPrice) : null,
         outputPerMTokUsd: outPrice ? Number(outPrice) : null,
       })
-      setModelId(''); setDisplayName('')
+      setModelId('')
+      setDisplayName('')
       apiGet<ModelDTO[]>('/models').then(setModels)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -192,7 +228,11 @@ function ModelsTab() {
         <h2 style={{ marginTop: 0 }}>Enroll a model</h2>
         <label>Provider</label>
         <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-          {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
         </select>
         <label>Model ID (as the API expects it)</label>
         <input value={modelId} onChange={(e) => setModelId(e.target.value)} placeholder="gpt-4o" />
@@ -213,20 +253,33 @@ function ModelsTab() {
         </div>
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!providerId || !modelId}>Enroll model</button>
+          <button className="primary" onClick={add} disabled={!providerId || !modelId}>
+            Enroll model
+          </button>
         </div>
       </div>
 
       <div className="card">
         <table>
-          <thead><tr><th>Display</th><th>Model ID</th><th>Context</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>Display</th>
+              <th>Model ID</th>
+              <th>Context</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {models.map((m) => (
               <tr key={m.id}>
                 <td>{m.displayName}</td>
                 <td style={{ color: 'var(--text-faint)' }}>{m.modelId}</td>
                 <td>{m.contextWindow ? m.contextWindow.toLocaleString() : '—'}</td>
-                <td><button className="danger" onClick={() => remove(m.id)}>Delete</button></td>
+                <td>
+                  <button className="danger" onClick={() => remove(m.id)}>
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -251,8 +304,12 @@ function MembersTab() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    apiGet<MemberDTO[]>('/members').then(setMembers).catch((e) => setError(String(e)))
-    apiGet<ModelDTO[]>('/models').then(setModels).catch(() => {})
+    apiGet<MemberDTO[]>('/members')
+      .then(setMembers)
+      .catch((e) => setError(String(e)))
+    apiGet<ModelDTO[]>('/models')
+      .then(setModels)
+      .catch(() => {})
   }, [])
   useEffect(load, [load])
 
@@ -266,7 +323,8 @@ function MembersTab() {
         temperature: Number(temperature),
         avatarColor: color,
       })
-      setName(''); setSystemPrompt('')
+      setName('')
+      setSystemPrompt('')
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -286,17 +344,34 @@ function MembersTab() {
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="The Strategist" />
         <label>Model</label>
         <select value={modelId} onChange={(e) => setModelId(e.target.value)}>
-          <option value="" disabled>Choose…</option>
-          {models.map((m) => <option key={m.id} value={m.id}>{m.displayName} ({m.modelId})</option>)}
+          <option value="" disabled>
+            Choose…
+          </option>
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.displayName} ({m.modelId})
+            </option>
+          ))}
         </select>
         <label>Persona system prompt</label>
-        <textarea rows={4} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)}
-          placeholder="You are The Strategist — you think in tradeoffs, second-order effects, and game theory…" />
+        <textarea
+          rows={4}
+          value={systemPrompt}
+          onChange={(e) => setSystemPrompt(e.target.value)}
+          placeholder="You are The Strategist — you think in tradeoffs, second-order effects, and game theory…"
+        />
         <div className="grid-2">
           <div>
             <label>Temperature ({temperature})</label>
-            <input type="range" min="0" max="2" step="0.1" value={temperature}
-              onChange={(e) => setTemperature(e.target.value)} style={{ width: '100%' }} />
+            <input
+              type="range"
+              min="0"
+              max="2"
+              step="0.1"
+              value={temperature}
+              onChange={(e) => setTemperature(e.target.value)}
+              style={{ width: '100%' }}
+            />
           </div>
           <div>
             <label>Color</label>
@@ -306,9 +381,13 @@ function MembersTab() {
                   key={c}
                   onClick={() => setColor(c)}
                   style={{
-                    background: c, width: 30, height: 30, borderRadius: 6,
+                    background: c,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 6,
                     outline: color === c ? '2px solid var(--text)' : 'none',
-                    border: 'none', cursor: 'pointer',
+                    border: 'none',
+                    cursor: 'pointer',
                   }}
                   aria-label={`color ${c}`}
                 />
@@ -318,21 +397,37 @@ function MembersTab() {
         </div>
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name || !modelId}>Mint member</button>
+          <button className="primary" onClick={add} disabled={!name || !modelId}>
+            Mint member
+          </button>
         </div>
       </div>
 
       <div className="card">
         <table>
-          <thead><tr><th>Member</th><th>Model</th><th>Provider</th><th>Temp</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Model</th>
+              <th>Provider</th>
+              <th>Temp</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {members.map((m) => (
               <tr key={m.id}>
-                <td><span style={{ color: m.avatarColor }}>●</span> {m.name}</td>
+                <td>
+                  <span style={{ color: m.avatarColor }}>●</span> {m.name}
+                </td>
                 <td>{m.modelName ?? '—'}</td>
                 <td style={{ color: 'var(--text-faint)' }}>{m.providerName ?? '—'}</td>
                 <td>{m.temperature}</td>
-                <td><button className="danger" onClick={() => remove(m.id)}>Delete</button></td>
+                <td>
+                  <button className="danger" onClick={() => remove(m.id)}>
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -356,8 +451,12 @@ function CouncilsTab() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    apiGet<CouncilDTO[]>('/councils').then(setCouncils).catch((e) => setError(String(e)))
-    apiGet<MemberDTO[]>('/members').then(setMembers).catch(() => {})
+    apiGet<CouncilDTO[]>('/councils')
+      .then(setCouncils)
+      .catch((e) => setError(String(e)))
+    apiGet<MemberDTO[]>('/members')
+      .then(setMembers)
+      .catch(() => {})
   }, [])
   useEffect(load, [load])
 
@@ -381,7 +480,10 @@ function CouncilsTab() {
         memberIds: [...selected],
         moderatorMemberId: moderatorId || null,
       })
-      setName(''); setDescription(''); setSelected(new Set()); setModeratorId('')
+      setName('')
+      setDescription('')
+      setSelected(new Set())
+      setModeratorId('')
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -401,7 +503,11 @@ function CouncilsTab() {
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="War Council" />
         <label>Description</label>
-        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Architecture decisions" />
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Architecture decisions"
+        />
 
         <label>Strategy</label>
         <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKind)}>
@@ -410,7 +516,14 @@ function CouncilsTab() {
         </select>
 
         <label>Rounds ({rounds})</label>
-        <input type="range" min="1" max="5" step="1" value={rounds} onChange={(e) => setRounds(Number(e.target.value))} />
+        <input
+          type="range"
+          min="1"
+          max="5"
+          step="1"
+          value={rounds}
+          onChange={(e) => setRounds(Number(e.target.value))}
+        />
 
         <label>Members (click to toggle)</label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -431,19 +544,34 @@ function CouncilsTab() {
           <option value="">None — raw transcript only</option>
           {[...selected].map((id) => {
             const mem = members.find((x) => x.id === id)
-            return mem ? <option key={id} value={id}>{mem.name}</option> : null
+            return mem ? (
+              <option key={id} value={id}>
+                {mem.name}
+              </option>
+            ) : null
           })}
         </select>
 
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div style={{ marginTop: 14 }}>
-          <button className="primary" onClick={add} disabled={!name || selected.size === 0}>Constitute council</button>
+          <button className="primary" onClick={add} disabled={!name || selected.size === 0}>
+            Constitute council
+          </button>
         </div>
       </div>
 
       <div className="card">
         <table>
-          <thead><tr><th>Council</th><th>Strategy</th><th>Rounds</th><th>Members</th><th>Moderator</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>Council</th>
+              <th>Strategy</th>
+              <th>Rounds</th>
+              <th>Members</th>
+              <th>Moderator</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {councils.map((c) => (
               <tr key={c.id}>
@@ -454,7 +582,11 @@ function CouncilsTab() {
                 <td style={{ color: 'var(--brass)' }}>
                   {c.members.find((m) => m.id === c.moderatorMemberId)?.name ?? '—'}
                 </td>
-                <td><button className="danger" onClick={() => remove(c.id)}>Dissolve</button></td>
+                <td>
+                  <button className="danger" onClick={() => remove(c.id)}>
+                    Dissolve
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

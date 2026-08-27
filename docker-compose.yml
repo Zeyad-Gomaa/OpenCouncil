@@ -1,0 +1,17 @@
+services:
+  opencouncil:
+    build: .
+    ports:
+      - '4311:4311'
+    environment:
+      # Required: without it, provider API keys stored in the UI become
+      # unreadable the next time this container restarts.
+      OPEN_COUNCIL_SECRET_KEY: ${OPEN_COUNCIL_SECRET_KEY:?set OPEN_COUNCIL_SECRET_KEY in .env or the environment}
+      SEED_DEMO_COUNCIL: 'true'
+      LOG_LEVEL: info
+    volumes:
+      - opencouncil-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  opencouncil-data:

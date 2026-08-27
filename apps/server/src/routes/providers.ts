@@ -4,13 +4,10 @@ import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { encryptSecret } from '../vault/crypto.js'
 import { AppError } from '../lib/errors.js'
-import {
-  modelCreateSchema,
-  modelUpdateSchema,
-  providerCreateSchema,
-  providerUpdateSchema,
-} from '@opencouncil/shared'
+import { modelCreateSchema, modelUpdateSchema, providerCreateSchema, providerUpdateSchema } from '@opencouncil/shared'
 import { logActivity, modelToDTO, providerToDTO } from './mappers.js'
+import { getAdapter } from '../providers/registry.js'
+import { decryptSecret } from '../vault/crypto.js'
 
 const PROVIDER_PRESETS: Record<string, { protocol: string; baseUrl?: string }> = {
   openai: { protocol: 'openai_compatible', baseUrl: 'https://api.openai.com/v1' },
@@ -33,8 +30,62 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
     presets: Object.entries(PROVIDER_PRESETS).map(([key, v]) => ({ key, ...v })),
   }))
 
+  app.post('/api/v1/providers/:id/test', async (req) => {
+    const { id } = req.params as { id: string }
+    const provider = db.prepare('SELECT * FROM providers WHERE id=?').get(id) as
+      | {
+          protocol: 'openai_compatible' | 'anthropic' | 'google' | 'mock'
+          base_url: string | null
+          api_key_encrypted: string | null
+          default_model_id: string | null
+        }
+      | undefined
+    if (!provider) throw new AppError(404, 'not_found', 'provider not found')
+    const model = db
+      .prepare('SELECT model_id FROM models WHERE id=? OR (provider_id=? AND model_id=?) LIMIT 1')
+      .get(provider.default_model_id, id, provider.default_model_id) as { model_id: string } | undefined
+    if (!model) throw new AppError(400, 'no_model', 'provider has no configured model to test')
+    const adapter = getAdapter(provider.protocol)
+    const started = Date.now()
+    try {
+      await adapter.chat({
+        baseUrl: provider.base_url ?? adapter.defaultBaseUrl ?? '',
+        apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : undefined,
+        modelId: model.model_id,
+        messages: [{ role: 'user', content: 'Respond with the single word OK.' }],
+        maxTokens: 8,
+        timeoutMs: 15_000,
+      })
+      return { ok: true, latencyMs: Date.now() - started, errorCode: null, message: 'connection successful' }
+    } catch (error) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        errorCode:
+          error instanceof Error && /auth|401|403|key/i.test(error.message)
+            ? 'authentication_failed'
+            : 'connection_failed',
+        message: 'provider connection failed',
+      }
+    }
+  })
+
+  app.post('/api/v1/providers/:id/discover-models', async (req) => {
+    const { id } = req.params as { id: string }
+    const provider = db.prepare('SELECT protocol FROM providers WHERE id=?').get(id) as { protocol: string } | undefined
+    if (!provider) throw new AppError(404, 'not_found', 'provider not found')
+    const models = db
+      .prepare(
+        'SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name',
+      )
+      .all(id)
+    return { supported: false, reason: 'automatic discovery is unavailable for this provider adapter', models }
+  })
+
   app.get('/api/v1/providers', async () => {
-    const rows = db.prepare('SELECT * FROM providers ORDER BY created_at').all() as Parameters<typeof providerToDTO>[0][]
+    const rows = db.prepare('SELECT * FROM providers ORDER BY created_at').all() as Parameters<
+      typeof providerToDTO
+    >[0][]
     return rows.map(providerToDTO)
   })
 
@@ -65,7 +116,14 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
     if (!row) throw new AppError(404, 'not_found', 'provider not found')
     const body = providerUpdateSchema.parse(req.body)
 
-    const cur = row as { name: string; protocol: string; base_url: string | null; default_model_id: string | null; enabled: number; api_key_encrypted: string | null }
+    const cur = row as {
+      name: string
+      protocol: string
+      base_url: string | null
+      default_model_id: string | null
+      enabled: number
+      api_key_encrypted: string | null
+    }
     const next = {
       name: body.name ?? cur.name,
       protocol: body.protocol ?? cur.protocol,
@@ -91,13 +149,18 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
 
   app.delete('/api/v1/providers/:id', async (req) => {
     const { id } = req.params as { id: string }
-    // Disable members whose models die with this provider.
-    db.prepare(
-      `UPDATE members SET enabled = 0
-       WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`,
-    ).run(id)
-    db.prepare('DELETE FROM providers WHERE id = ?').run(id)
-    logActivity(db, 'provider.deleted', { id })
+    db.exec('BEGIN')
+    try {
+      db.prepare(
+        `UPDATE members SET enabled = 0 WHERE model_id IN (SELECT m.id FROM models m WHERE m.provider_id = ?)`,
+      ).run(id)
+      db.prepare('DELETE FROM providers WHERE id = ?').run(id)
+      logActivity(db, 'provider.deleted', { id })
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
     return { ok: true }
   })
 
@@ -147,7 +210,14 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
     const cur = db.prepare('SELECT * FROM models WHERE id = ?').get(id) as never | undefined
     if (!cur) throw new AppError(404, 'not_found', 'model not found')
     const body = modelUpdateSchema.parse(req.body)
-    const c = cur as { model_id: string; display_name: string; context_window: number | null; input_per_mtok_usd: number | null; output_per_mtok_usd: number | null; enabled: number }
+    const c = cur as {
+      model_id: string
+      display_name: string
+      context_window: number | null
+      input_per_mtok_usd: number | null
+      output_per_mtok_usd: number | null
+      enabled: number
+    }
     db.prepare(
       `UPDATE models SET model_id=?, display_name=?, context_window=?, input_per_mtok_usd=?, output_per_mtok_usd=?, enabled=? WHERE id=?`,
     ).run(
@@ -164,9 +234,16 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
 
   app.delete('/api/v1/models/:id', async (req) => {
     const { id } = req.params as { id: string }
-    db.prepare('UPDATE members SET enabled = 0 WHERE model_id = ?').run(id)
-    db.prepare('DELETE FROM models WHERE id = ?').run(id)
-    logActivity(db, 'model.deleted', { id })
+    db.exec('BEGIN')
+    try {
+      db.prepare('UPDATE members SET enabled = 0 WHERE model_id = ?').run(id)
+      db.prepare('DELETE FROM models WHERE id = ?').run(id)
+      logActivity(db, 'model.deleted', { id })
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
     return { ok: true }
   })
 }

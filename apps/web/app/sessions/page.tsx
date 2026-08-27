@@ -21,7 +21,16 @@ export default function SessionsPage() {
 
   return (
     <div>
-      <div className="page-header"><div><p className="eyebrow">Operations</p><h1>Sessions</h1><p className="subtitle">Every deliberation, most recent first.</p></div><Link className="btn primary" href="/">+ New session</Link></div>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">Operations</p>
+          <h1>Sessions</h1>
+          <p className="subtitle">Every deliberation, most recent first.</p>
+        </div>
+        <Link className="btn primary" href="/">
+          + New session
+        </Link>
+      </div>
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <div className="card">
         <table>
@@ -36,15 +45,24 @@ export default function SessionsPage() {
           </thead>
           <tbody>
             {sessions.length === 0 && (
-              <tr><td colSpan={5} className="empty">No sessions yet. Convene your first council.</td></tr>
+              <tr>
+                <td colSpan={5} className="empty">
+                  No sessions yet. Convene your first council.
+                </td>
+              </tr>
             )}
             {sessions.map((s) => (
               <tr key={s.id}>
                 <td>
-                  <Link href={`/sessions/view/?id=${s.id}`}>{s.topic.slice(0, 80)}{s.topic.length > 80 ? '…' : ''}</Link>
+                  <Link href={`/sessions/view/?id=${s.id}`}>
+                    {s.topic.slice(0, 80)}
+                    {s.topic.length > 80 ? '…' : ''}
+                  </Link>
                 </td>
                 <td>{s.councilName}</td>
-                <td><span className={`badge ${s.status}`}>{s.status}</span></td>
+                <td>
+                  <span className={`badge ${s.status}`}>{s.status}</span>
+                </td>
                 <td>{s.messageCount ?? 0}</td>
                 <td style={{ color: 'var(--text-faint)' }}>
                   {s.startedAt ? new Date(s.startedAt).toLocaleString() : '—'}

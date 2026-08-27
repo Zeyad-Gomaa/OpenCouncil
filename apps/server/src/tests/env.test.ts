@@ -1,0 +1,39 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { loadEnvFile } from '../env.js'
+
+const KEYS = ['OPEN_COUNCIL_SECRET_KEY', 'OPEN_COUNCIL_ENV_FILE', 'PORT', 'HOST'] as const
+
+afterEach(() => {
+  for (const key of KEYS) delete process.env[key]
+})
+
+function envDir(contents: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'oc-env-'))
+  writeFileSync(path.join(dir, '.env'), contents)
+  return dir
+}
+
+describe('.env loading', () => {
+  it('reads the vault key out of .env so provider keys survive a restart', () => {
+    const dir = envDir('OPEN_COUNCIL_SECRET_KEY=super-secret-master-key\nPORT=5000\n')
+    expect(loadEnvFile(dir)).toBe(path.join(dir, '.env'))
+    expect(process.env.OPEN_COUNCIL_SECRET_KEY).toBe('super-secret-master-key')
+    expect(process.env.PORT).toBe('5000')
+  })
+
+  it('lets a real environment variable win over the file', () => {
+    process.env.OPEN_COUNCIL_SECRET_KEY = 'from-environment'
+    loadEnvFile(envDir('OPEN_COUNCIL_SECRET_KEY=from-file\n'))
+    expect(process.env.OPEN_COUNCIL_SECRET_KEY).toBe('from-environment')
+  })
+
+  it('treats a missing default .env as normal but a missing explicit one as an error', () => {
+    const empty = mkdtempSync(path.join(tmpdir(), 'oc-env-'))
+    expect(loadEnvFile(empty)).toBeNull()
+    process.env.OPEN_COUNCIL_ENV_FILE = 'nope.env'
+    expect(() => loadEnvFile(empty)).toThrow(/could not read env file/)
+  })
+})
