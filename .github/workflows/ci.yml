@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Committed build output is up to date
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- apps/server/dist packages/shared/dist; then
+            echo "::error::apps/server/dist or packages/shared/dist is stale — run 'npm run build' and commit the result."
+            git diff --stat -- apps/server/dist packages/shared/dist
+            exit 1
+          fi
+      - name: Package smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          TGZ="$(npm pack --silent)"
+          TMP="$(mktemp -d)"
+          cd "$TMP"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$TGZ" >/dev/null
+          test "$(./node_modules/.bin/opencouncil --version)" = "$(node -p "require('$GITHUB_WORKSPACE/package.json').version")"
+          ./node_modules/.bin/opencouncil --help >/dev/null
+          test -f node_modules/opencouncil/apps/server/dist/public/index.html

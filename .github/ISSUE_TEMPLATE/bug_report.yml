@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in OpenCouncil does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security problems here — see
+        [SECURITY.md](https://github.com/Zeyad-Gomaa/OpenCouncil/blob/main/SECURITY.md).
+
+        Never paste a provider API key, `OPEN_COUNCIL_SECRET_KEY`, or an
+        unredacted config export into this issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. opencouncil --port 4311
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenCouncil version
+      description: Output of `opencouncil --version`, or the commit you are on.
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version and OS
+      placeholder: 'node v22.13.0, macOS 15.2'
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - npm install -g github:Zeyad-Gomaa/OpenCouncil
+        - Cloned the repo and ran npm run build
+        - Docker
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Run with `LOG_LEVEL=debug` if you can. Redact any secrets.
+      render: shell

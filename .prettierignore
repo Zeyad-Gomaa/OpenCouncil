@@ -1,0 +1,7 @@
+node_modules/
+apps/server/dist/
+apps/web/.next/
+apps/web/out/
+packages/shared/dist/
+package-lock.json
+data/

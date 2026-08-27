@@ -1,8 +1,8 @@
 # OpenCouncil Roadmap
 
-## v0.1 — The First Convening (current)
+## vNext reliability foundation (current)
 
-- [x] Monorepo scaffold (npm workspaces, strict TS, ESM)
+- [x] Monorepo scaffold (strict TS, ESM, single root manifest)
 - [x] SQLite persistence with embedded migrations
 - [x] AES-256-GCM BYOK vault
 - [x] Provider adapters: OpenAI-compatible, Anthropic, Google, Mock
@@ -14,8 +14,17 @@
 - [x] Activity dashboard
 - [x] Settings UI for providers/models/members/councils
 - [x] Demo council seeding on first boot
+- [x] Nullable member model references with repairable disabled members
+- [x] Historical session snapshots independent of live configuration
+- [x] Transactional multi-table configuration mutations
+- [x] Stable member IDs in lifecycle events and deterministic message ordering
+- [x] Durable session events with SSE event IDs and replay support
+- [x] Stable process health instance ID and strict CLI argument parsing
+- [x] `.env` loading with env-over-file, flag-over-env precedence
+- [x] Working Docker image and Compose bundle
+- [x] ESLint + Prettier, enforced in CI alongside build-output staleness checks
 
-## v0.2 — Deeper Deliberation
+## Follow-up — Deeper Deliberation
 
 - True token-level streaming into the chamber (SSE deltas per message)
 - Voting / consensus scoring: members rate each proposal, weighted aggregation
@@ -33,9 +42,9 @@
 
 - Multi-user auth (passkeys), roles
 - Budget caps: hard stop when spend exceeds limit; per-council budgets
-- Export: session transcripts as Markdown/JSON, activity as CSV
+- Activity export as CSV (session transcripts already export as Markdown/JSON)
 - Postgres backend option behind the same repository interface
-- Docker Compose bundle + Helm chart
+- Helm chart
 
 ## v1.0 — Public Council
 

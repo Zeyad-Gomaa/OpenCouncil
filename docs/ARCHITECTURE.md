@@ -14,16 +14,16 @@ orchestration, delegation, personas, strategies — is configurable.
 
 ## Stack
 
-| Layer      | Choice | Why |
-|------------|--------|-----|
-| Language   | TypeScript everywhere (strict) | one mental model, shared types |
-| Monorepo   | npm workspaces | zero extra tooling, ships with node |
-| Web        | Next.js 14 (App Router) + React 18 + SSE | streaming transcript without websocket infra |
-| Server     | Node 20+, Fastify, ESM | fast, schema-light, first-class SSE |
-| DB         | SQLite via Node.js `node:sqlite` | single-file, zero-ops, no native addon install |
-| Providers  | OpenAI-compatible HTTP, Anthropic Messages, Google Gemini, Mock | covers ~95% of the market incl. local runtimes (Ollama, LM Studio, vLLM) |
-| Validation | zod at every trust boundary | API + config + env share one grammar |
-| Styling    | hand-rolled CSS custom properties | no framework tax, full theming control |
+| Layer      | Choice                                                          | Why                                                                                                                              |
+| ---------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Language   | TypeScript everywhere (strict)                                  | one mental model, shared types                                                                                                   |
+| Monorepo   | plain directories, one root manifest                            | no workspace linking to keep in sync; resolution runs through TS `paths`, an esbuild `--alias`, and Next's tsconfig-path support |
+| Web        | Next.js 14 (App Router) + React 18 + SSE                        | streaming transcript without websocket infra                                                                                     |
+| Server     | Node 20+, Fastify, ESM                                          | fast, schema-light, first-class SSE                                                                                              |
+| DB         | SQLite via Node.js `node:sqlite`                                | single-file, zero-ops, no native addon install                                                                                   |
+| Providers  | OpenAI-compatible HTTP, Anthropic Messages, Google Gemini, Mock | covers ~95% of the market incl. local runtimes (Ollama, LM Studio, vLLM)                                                         |
+| Validation | zod at every trust boundary                                     | API + config + env share one grammar                                                                                             |
+| Styling    | hand-rolled CSS custom properties                               | no framework tax, full theming control                                                                                           |
 
 ## Repository layout
 
@@ -107,6 +107,7 @@ settings_kv      key PK, value JSON (app settings: currency, budget caps later)
 ```
 
 Key invariants:
+
 - `providers.api_key_encrypted` never leaves the server unencrypted; API responses
   return `hasApiKey` boolean only.
 - Deleting a provider cascades its models; deleting a member removes it from
@@ -129,17 +130,17 @@ One interface:
 
 ```ts
 interface ProviderAdapter {
-  readonly protocol: ProviderProtocol;
+  readonly protocol: ProviderProtocol
   chat(opts: {
-    baseUrl: string;
-    apiKey?: string;
-    modelId: string;
-    messages: ChatMessage[];
-    temperature?: number;
-    maxTokens?: number;
-    signal?: AbortSignal;
-    timeoutMs: number;
-  }): Promise<ChatResult>;
+    baseUrl: string
+    apiKey?: string
+    modelId: string
+    messages: ChatMessage[]
+    temperature?: number
+    maxTokens?: number
+    signal?: AbortSignal
+    timeoutMs: number
+  }): Promise<ChatResult>
 }
 ```
 
@@ -163,10 +164,11 @@ A session runs through phases driven by its council's strategy:
    per round. After N rounds, the moderator (if set) receives the full
    transcript and produces the synthesis.
 2. **Debate**: round 1 = independent positions; each subsequent round every
-   member sees the *full transcript so far* and may rebut, concede, or refine.
+   member sees the _full transcript so far_ and may rebut, concede, or refine.
    Moderator synthesizes at the end.
 
 Engine mechanics:
+
 - `session-manager` owns lifecycle: queued → running → completed | failed |
   cancelled, with abort controllers so a running session can be cancelled.
 - `bus` fans out typed events per session to any number of SSE subscribers:
@@ -249,6 +251,7 @@ snapshot endpoint then subscribes to SSE. Poll-free, push-driven.
 ## Testing
 
 Vitest across packages:
+
 - unit: vault roundtrip, adapters against `mock` protocol + intercepted fetch,
   strategies' ordering logic, activity aggregation math.
 - integration: in-memory SQLite migration chain, REST routes via `app.inject()`
