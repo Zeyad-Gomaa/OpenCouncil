@@ -830,7 +830,7 @@ function registerMemberCouncilRoutes(app, db) {
       body.temperature ?? c.temperature,
       body.maxTokens === void 0 ? c.max_tokens : body.maxTokens,
       body.avatarColor ?? c.avatar_color,
-      body.enabled === void 0 ? c.enabled : body.enabled ? 1 : 0,
+      body.enabled === void 0 ? body.modelId ? 1 : c.enabled : body.enabled ? 1 : 0,
       id
     );
     const row = db.prepare(`${MEMBER_JOIN} WHERE mem.id = ?`).get(id);

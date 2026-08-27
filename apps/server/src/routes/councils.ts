@@ -75,7 +75,7 @@ export function registerMemberCouncilRoutes(app: FastifyInstance, db: DB): void 
       body.temperature ?? c.temperature,
       body.maxTokens === undefined ? c.max_tokens : body.maxTokens,
       body.avatarColor ?? c.avatar_color,
-      body.enabled === undefined ? c.enabled : body.enabled ? 1 : 0,
+      body.enabled === undefined ? (body.modelId ? 1 : c.enabled) : body.enabled ? 1 : 0,
       id,
     )
     const row = db.prepare(`${MEMBER_JOIN} WHERE mem.id = ?`).get(id) as never
