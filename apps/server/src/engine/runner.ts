@@ -98,6 +98,11 @@ function computeCost(
   return Number((inCost + outCost).toFixed(6))
 }
 
+/** Web research and mid-session user directives, even when the strategy hides peer transcript. */
+export function extraGroundingFromTranscript(transcript: TranscriptEntry[]): TranscriptEntry[] {
+  return transcript.filter((e) => e.memberId === 'system_web' || e.memberId === 'user')
+}
+
 export function formatTranscriptForMember(
   transcript: TranscriptEntry[],
   currentMemberId: string,
@@ -202,7 +207,7 @@ export class SessionRunner {
             kind: 'system',
             round: 0,
             roundPosition: 1,
-            content: `🔍 **Live Web Research Found:**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+            content: `**Live web research**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
           })
           bus.publish({
             type: 'message.created',
@@ -215,7 +220,33 @@ export class SessionRunner {
               role: 'assistant',
               kind: 'system',
               round: 0,
-              content: `🔍 **Live Web Research Found:**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+              content: `**Live web research**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+              createdAt: new Date().toISOString(),
+            },
+          })
+        } else {
+          const emptyId = this.deps.insertMessage({
+            sessionId,
+            memberId: null,
+            memberName: 'Web Search',
+            kind: 'system',
+            round: 0,
+            roundPosition: 1,
+            content: 'No live web sources were found for this question. The council will reason from model knowledge.',
+          })
+          bus.publish({
+            type: 'message.created',
+            sessionId,
+            message: {
+              id: String(emptyId),
+              sessionId,
+              memberId: null,
+              memberName: 'Web Search',
+              role: 'assistant',
+              kind: 'system',
+              round: 0,
+              content:
+                'No live web sources were found for this question. The council will reason from model knowledge.',
               createdAt: new Date().toISOString(),
             },
           })
@@ -387,7 +418,7 @@ export class SessionRunner {
           `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
           `4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.\n` +
           `5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.\n` +
-          `6. DIAGRAMS & VISUALS: You can and SHOULD draw Mermaid diagrams (\`\`\`mermaid ... \`\`\`) to illustrate architectures, flows, state transitions, comparison matrices, and trade-offs. You can also embed images (\`![caption](url)\`).\n` +
+          `6. DIAGRAMS: Prefer a simple \`\`\`mermaid flowchart TD\`\`\` when a picture helps. Node IDs must be alphanumeric (no spaces) — put labels in brackets: Foo[Label with spaces]. Never use the reserved word "end" as a node id. Use <br/> not <br>. Skip a diagram if the syntax would be unclear.\n` +
           `7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
       )
 
@@ -401,6 +432,17 @@ export class SessionRunner {
             formatTranscriptForMember(transcript, member.id, member.name) +
             `\n\n=== END OF TRANSCRIPT ===\n\nNow respond for Round ${round}. Speak directly to your council peers and advance the deliberation.`,
         })
+      } else {
+        const grounding = extraGroundingFromTranscript(transcript)
+        if (grounding.length > 0) {
+          messages.push({
+            role: 'system',
+            content:
+              `=== GROUNDING (web research and user directives) ===\n\n` +
+              formatTranscriptForMember(grounding, member.id, member.name) +
+              `\n\n=== END OF GROUNDING ===`,
+          })
+        }
       }
 
       messages.push({ role: 'user', content: topic })

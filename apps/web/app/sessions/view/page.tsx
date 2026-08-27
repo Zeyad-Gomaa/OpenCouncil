@@ -21,8 +21,8 @@ interface LiveUsage {
 }
 
 const STATUS_LABEL: Record<MemberLiveStatus, string> = {
-  queued: 'awaiting',
-  thinking: 'deliberating…',
+  queued: 'waiting',
+  thinking: 'thinking…',
   streaming: 'writing…',
   completed: 'done',
   failed: 'error',
@@ -52,6 +52,7 @@ function ChamberContent() {
   const [error, setError] = useState<string | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const esRef = useRef<EventSource | null>(null)
 
   const mergeMessage = useCallback((m: MessageDTO) => {
     setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
@@ -62,8 +63,8 @@ function ChamberContent() {
       setError('No session id in URL')
       return
     }
-    let es: EventSource | null = null
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     async function boot() {
       try {
@@ -84,7 +85,7 @@ function ChamberContent() {
             for (const mem of council.members) {
               st[mem.id] = 'queued'
               names[mem.id] = mem.name
-              colors[mem.id] = mem.avatarColor || '#818cf8'
+              colors[mem.id] = mem.avatarColor || '#a3a3a3'
             }
             setMemberStatus(st)
             setMemberNames(names)
@@ -96,70 +97,83 @@ function ChamberContent() {
 
         if (['completed', 'failed', 'cancelled'].includes(snap.session.status)) return
 
-        es = new EventSource(`/api/v1/sessions/${sessionId}/events?after=${snap.lastEventSequence}`)
-        es.onmessage = (ev) => {
-          let event: CouncilEvent & { message?: MessageDTO }
-          try {
-            event = JSON.parse(ev.data)
-          } catch {
-            return
-          }
-          switch (event.type) {
-            case 'session.started':
-              setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'running' } })
-              break
-            case 'member.started':
-              setMemberStatus((st) => ({ ...st, [event.memberId]: 'thinking' }))
-              break
-            case 'message.created':
-              if (event.message) {
-                mergeMessage(event.message)
-                if (event.message.kind !== 'system' && event.message.role === 'assistant') {
-                  if (event.message.memberId)
-                    setMemberStatus((st) => ({ ...st, [event.message!.memberId!]: 'completed' }))
+        const connect = () => {
+          if (cancelled) return
+          esRef.current?.close()
+          const es = new EventSource(`/api/v1/sessions/${sessionId}/events?after=${snap.lastEventSequence}`)
+          esRef.current = es
+          es.onmessage = (ev) => {
+            let event: CouncilEvent & { message?: MessageDTO }
+            try {
+              event = JSON.parse(ev.data)
+            } catch {
+              return
+            }
+            switch (event.type) {
+              case 'session.started':
+                setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'running' } })
+                break
+              case 'member.started':
+                setMemberStatus((st) => ({ ...st, [event.memberId]: 'thinking' }))
+                break
+              case 'message.created':
+                if (event.message) {
+                  mergeMessage(event.message)
+                  if (event.message.kind !== 'system' && event.message.role === 'assistant') {
+                    if (event.message.memberId)
+                      setMemberStatus((st) => ({ ...st, [event.message!.memberId!]: 'completed' }))
+                  }
                 }
-              }
-              break
-            case 'message.replay':
-              if (event.message) mergeMessage(event.message)
-              break
-            case 'member.completed':
-              setMemberStatus((st) => ({ ...st, [event.memberId]: 'completed' }))
-              break
-            case 'member.failed':
-              setMemberStatus((st) => ({ ...st, [event.memberId]: 'failed' }))
-              break
-            case 'session.extended':
-              setActionNotice(`Debate extended by +${event.additionalRounds} round(s) (Total: ${event.totalRounds})`)
-              break
-            case 'session.concluding':
-              setActionNotice('Council is wrapping up deliberation and synthesizing consensus…')
-              break
-            case 'usage.recorded':
-              setLiveUsage((current) => ({
-                calls: current.calls + 1,
-                tokens: current.tokens + event.usage.totalTokens,
-                costUsd: current.costUsd + (event.usage.costUsd ?? 0),
-              }))
-              break
-            case 'synthesis.completed':
-              if (event.message) mergeMessage(event.message)
-              break
-            case 'session.completed':
-              setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'completed' } })
-              setActionNotice(null)
-              break
-            case 'session.failed':
-              setError(event.error)
-              setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'failed' } })
-              setActionNotice(null)
-              break
-            case 'session.cancelled':
-              setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'cancelled' } })
-              setActionNotice(null)
-              break
+                break
+              case 'message.replay':
+                if (event.message) mergeMessage(event.message)
+                break
+              case 'member.completed':
+                setMemberStatus((st) => ({ ...st, [event.memberId]: 'completed' }))
+                break
+              case 'member.failed':
+                setMemberStatus((st) => ({ ...st, [event.memberId]: 'failed' }))
+                break
+              case 'session.extended':
+                setActionNotice(`Debate extended by +${event.additionalRounds} round(s) (Total: ${event.totalRounds})`)
+                break
+              case 'session.concluding':
+                setActionNotice('Wrapping up — synthesizing consensus…')
+                break
+              case 'usage.recorded':
+                setLiveUsage((current) => ({
+                  calls: current.calls + 1,
+                  tokens: current.tokens + event.usage.totalTokens,
+                  costUsd: current.costUsd + (event.usage.costUsd ?? 0),
+                }))
+                break
+              case 'synthesis.completed':
+                if (event.message) mergeMessage(event.message)
+                break
+              case 'session.completed':
+                setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'completed' } })
+                setActionNotice(null)
+                es.close()
+                break
+              case 'session.failed':
+                setError(event.error)
+                setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'failed' } })
+                setActionNotice(null)
+                es.close()
+                break
+              case 'session.cancelled':
+                setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'cancelled' } })
+                setActionNotice(null)
+                es.close()
+                break
+            }
+          }
+          es.onerror = () => {
+            es.close()
+            if (!cancelled) retryTimer = setTimeout(connect, 2000)
           }
         }
+        connect()
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       }
@@ -168,7 +182,8 @@ function ChamberContent() {
     void boot()
     return () => {
       cancelled = true
-      es?.close()
+      if (retryTimer) clearTimeout(retryTimer)
+      esRef.current?.close()
     }
   }, [sessionId, mergeMessage])
 
@@ -191,7 +206,7 @@ function ChamberContent() {
     try {
       setActionBusy(true)
       await apiSend(`/sessions/${sessionId}/extend`, 'POST', { additionalRounds })
-      setActionNotice(`Requested +${additionalRounds} additional debate round(s)`)
+      setActionNotice(`Requested +${additionalRounds} additional round(s)`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -203,7 +218,7 @@ function ChamberContent() {
     try {
       setActionBusy(true)
       await apiSend(`/sessions/${sessionId}/conclude`, 'POST', { reason: 'User requested early synthesis' })
-      setActionNotice('Concluding deliberation — moderator is synthesizing…')
+      setActionNotice('Concluding — moderator is synthesizing…')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -217,8 +232,9 @@ function ChamberContent() {
     setInterventionText('')
     try {
       setActionBusy(true)
-      await apiSend(`/sessions/${sessionId}/intervene`, 'POST', { content: text })
-      setActionNotice('Directive delivered — council members will address it!')
+      const msg = await apiSend<MessageDTO>(`/sessions/${sessionId}/intervene`, 'POST', { content: text })
+      mergeMessage(msg)
+      setActionNotice('Directive delivered to the council')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -246,56 +262,44 @@ function ChamberContent() {
 
   if (!session) {
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center' }}>
-        <div className="skeleton" style={{ width: 300, height: 24, margin: '0 auto 12px' }} />
-        <div className="skeleton" style={{ width: 200, height: 16, margin: '0 auto' }} />
+      <div className="chamber">
+        <div style={{ padding: '80px 0', textAlign: 'center' }}>
+          <div className="skeleton" style={{ width: 280, height: 22, margin: '0 auto 12px' }} />
+          <div className="skeleton" style={{ width: 180, height: 14, margin: '0 auto' }} />
+          {error && <p className="form-error">{error}</p>}
+        </div>
       </div>
     )
   }
 
   return (
-    <div>
-      {/* Header */}
+    <div className="chamber">
       <div className="chamber-header">
-        <div>
-          <p className="eyebrow">Live Deliberation {running && currentRound > 0 ? `· Round ${currentRound}` : ''}</p>
-          <h1 style={{ margin: 0 }}>{session.councilName || 'Deliberation'}</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+        <div className="chamber-header-copy">
+          <Link href="/sessions" className="chamber-back">
+            History
+          </Link>
+          <h1>{session.councilName || 'Deliberation'}</h1>
+          <p className="chamber-topic">{session.topic}</p>
+          <div className="chamber-status-row">
             <span className={`badge ${session.status}`}>{session.status}</span>
-            {session.topic && (
-              <span className="muted" style={{ fontSize: '0.82rem' }}>
-                {session.topic.length > 100 ? session.topic.slice(0, 100) + '…' : session.topic}
-              </span>
-            )}
+            {running && currentRound > 0 && <span className="muted">Round {currentRound}</span>}
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="chamber-actions">
           {running ? (
             <>
               <button
                 className="sm primary"
                 onClick={handleConclude}
                 disabled={actionBusy}
-                title="Finish debate and generate moderator consensus"
+                title="Finish and synthesize"
               >
-                ⚖ End & Synthesize
+                End & synthesize
               </button>
-              <button
-                className="sm"
-                onClick={() => handleExtend(1)}
-                disabled={actionBusy}
-                title="Add 1 more round to debate"
-              >
-                +1 Round
-              </button>
-              <button
-                className="sm"
-                onClick={() => handleExtend(3)}
-                disabled={actionBusy}
-                title="Add 3 more rounds to debate"
-              >
-                +3 Rounds
+              <button className="sm" onClick={() => handleExtend(1)} disabled={actionBusy}>
+                +1 round
               </button>
               <button className="sm danger" onClick={handleCancel} disabled={actionBusy}>
                 Cancel
@@ -304,121 +308,108 @@ function ChamberContent() {
           ) : (
             <>
               <button className="sm" onClick={handleRerun} disabled={actionBusy}>
-                ↻ Re-run
+                Re-run
               </button>
               <Link className="btn sm primary" href={`/?topic=${encodeURIComponent(session.topic)}`}>
-                ✎ Edit & Convene
+                Edit & convene
               </Link>
             </>
           )}
         </div>
       </div>
 
-      {actionNotice && (
-        <div
-          style={{
-            padding: '8px 14px',
-            background: 'var(--accent-glow)',
-            border: '1px solid var(--border-accent)',
-            borderRadius: 'var(--radius)',
-            fontSize: '0.82rem',
-            color: 'var(--accent-bright)',
-            marginTop: 10,
-          }}
-        >
-          ✦ {actionNotice}
-        </div>
-      )}
+      {actionNotice && <div className="notice">{actionNotice}</div>}
+      {error && <p className="form-error">Error: {error}</p>}
 
-      {error && <p style={{ color: 'var(--danger)', marginTop: 8 }}>Error: {error}</p>}
-
-      {/* Member rail */}
       <div className="member-rail">
         {Object.entries(memberStatus).map(([id, st]) => (
           <div key={id} className="member-pill" title={`${memberNames[id] ?? id}: ${STATUS_LABEL[st]}`}>
             <span className={`status-dot ${st}`} />
             <span>{memberNames[id] ?? id}</span>
             {st === 'thinking' || st === 'streaming' ? (
-              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', marginLeft: 4 }}>{STATUS_LABEL[st]}</span>
+              <span className="member-pill-status">{STATUS_LABEL[st]}</span>
             ) : null}
           </div>
         ))}
       </div>
 
-      {/* Synthesis pinned */}
-      {synthesis && (
-        <div className="synthesis-card">
-          <h3>⚖ Council Synthesis</h3>
-          <div className="message-content" style={{ marginTop: 8 }}>
-            <MarkdownRenderer content={synthesis.content} />
+      <div className="chat-thread">
+        {synthesis && (
+          <div className="synthesis-card">
+            <div className="synthesis-kicker">Council synthesis</div>
+            <div className="message-content">
+              <MarkdownRenderer content={synthesis.content} />
+            </div>
+            <MessageMeta m={synthesis} />
           </div>
-          <MessageMeta m={synthesis} />
-        </div>
-      )}
+        )}
 
-      {/* Transcript by round */}
-      {rounds.map((round) => (
-        <div key={round}>
-          <h2>{round === 0 ? 'The Question & Grounding' : `Round ${round}`}</h2>
-          {discussion
-            .filter((m) => m.round === round)
-            .map((m) => {
-              const isWeb = m.memberName === 'Web Search'
-              const color =
-                m.kind === 'user'
-                  ? 'var(--accent)'
-                  : isWeb
-                    ? '#38bdf8'
+        {rounds.map((round) => (
+          <div key={round}>
+            <div className="round-label">{round === 0 ? 'Question & research' : `Round ${round}`}</div>
+            {discussion
+              .filter((m) => m.round === round)
+              .map((m) => {
+                const isWeb = m.memberName === 'Web Search'
+                const isUser = m.kind === 'user'
+                const color = isWeb
+                  ? '#7dd3fc'
+                  : isUser
+                    ? 'var(--text)'
                     : memberColors[m.memberId || ''] || 'var(--text-secondary)'
-              const initials = isWeb ? '🔍' : (m.memberName || '??').slice(0, 2).toUpperCase()
+                const initials = isWeb ? 'W' : isUser ? 'Y' : (m.memberName || '??').slice(0, 2).toUpperCase()
 
-              return (
-                <div key={m.id} className="message-bubble">
-                  <div
-                    className="avatar"
-                    style={{
-                      background: isWeb ? 'rgba(56, 189, 248, 0.15)' : color,
-                      color: isWeb ? '#38bdf8' : '#fff',
-                    }}
-                  >
-                    {initials}
-                  </div>
-                  <div className="message-body">
-                    <div className="message-header">
-                      <span className="message-sender" style={{ color }}>
-                        {m.memberName || 'User'}
-                      </span>
-                      <MessageMeta m={m} />
+                return (
+                  <div key={m.id} className={`message-bubble ${isUser ? 'user' : ''} ${isWeb ? 'web' : ''}`}>
+                    <div
+                      className="avatar"
+                      style={{
+                        background: isWeb ? 'rgba(125, 211, 252, 0.12)' : isUser ? '#262626' : color,
+                        color: isWeb ? '#7dd3fc' : '#fff',
+                      }}
+                    >
+                      {initials}
                     </div>
-                    <div className="message-content">
-                      <MarkdownRenderer content={m.content} />
+                    <div className="message-body">
+                      <div className="message-header">
+                        <span className="message-sender" style={{ color: isUser ? 'var(--text)' : color }}>
+                          {isUser ? 'You' : m.memberName || 'Member'}
+                        </span>
+                        <MessageMeta m={m} />
+                      </div>
+                      <div className="message-content">
+                        <MarkdownRenderer content={m.content} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })}
-        </div>
-      ))}
+                )
+              })}
+          </div>
+        ))}
 
-      {/* Typing indicator */}
-      {running && (
-        <div className="typing-indicator">
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
-          <span style={{ marginLeft: 8, fontSize: '0.82rem' }}>Council is deliberating…</span>
-        </div>
-      )}
+        {running && (
+          <div className="typing-indicator">
+            <span className="dot" />
+            <span className="dot" />
+            <span className="dot" />
+            <span>Council is deliberating…</span>
+          </div>
+        )}
 
-      {/* User mid-deliberation intervention chat box */}
+        {!running && !synthesis && session.status === 'completed' && (
+          <p className="muted" style={{ padding: '8px 0 16px' }}>
+            Session complete. No moderator synthesis was configured.
+          </p>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
       {running && (
-        <div style={{ marginTop: 24, marginBottom: 20 }}>
-          <div
-            className="chat-input-box"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-accent)' }}
-          >
+        <div className="composer-dock">
+          <div className="chat-input-box">
             <textarea
-              placeholder="Interrupt / Steer the council (e.g. 'Focus on latency tradeoffs', 'What about caching?')..."
+              placeholder="Steer the council…"
               value={interventionText}
               onChange={(e) => setInterventionText(e.target.value)}
               onKeyDown={(e) => {
@@ -427,36 +418,27 @@ function ChamberContent() {
                   handleIntervene()
                 }
               }}
-              rows={2}
+              rows={1}
               disabled={actionBusy}
             />
             <button
               className="send-btn"
               onClick={handleIntervene}
               disabled={actionBusy || !interventionText.trim()}
-              title="Send directive to council"
+              title="Send directive"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M5 12h14M12 5l7 7-7 7" />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
             </button>
           </div>
-          <p className="muted" style={{ fontSize: '0.74rem', marginTop: 4, textAlign: 'right' }}>
-            ✦ Your message will be injected directly into the active debate.
-          </p>
+          <p className="composer-hint">Injected into the live debate. Enter to send.</p>
         </div>
       )}
 
-      {!running && !synthesis && session.status === 'completed' && (
-        <p className="muted" style={{ padding: '16px 0' }}>
-          Session complete. No moderator synthesis was configured.
-        </p>
-      )}
-
-      {/* Usage footer */}
       <div className="usage-bar">
         <div className="usage-item">
-          <span>LLM calls</span>
+          <span>Calls</span>
           <span className="usage-value">{liveUsage.calls}</span>
         </div>
         <div className="usage-item">
@@ -472,11 +454,6 @@ function ChamberContent() {
           <span className="usage-value">{messages.length}</span>
         </div>
       </div>
-
-      <div ref={bottomRef} />
-      <p style={{ marginTop: 20 }}>
-        <Link href="/sessions">← All sessions</Link>
-      </p>
     </div>
   )
 }

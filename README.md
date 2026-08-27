@@ -25,16 +25,29 @@ your orchestration.
 
 ## Install
 
-**From GitHub (recommended):**
+**From a clone (one command after clone):**
 
 ```bash
-npm install -g https://github.com/Zeyad-Gomaa/OpenCouncil/archive/refs/tags/v0.1.0.tar.gz
+git clone https://github.com/Zeyad-Gomaa/OpenCouncil.git
+cd OpenCouncil
+npm install
+npx opencouncil
+```
+
+`npm install` installs dependencies. If the prebuilt server and UI are missing,
+it compiles them automatically. `npx opencouncil` then serves the API and the
+chamber on one port (default 4311).
+
+**Global install from a GitHub archive:**
+
+```bash
+npm install -g https://github.com/Zeyad-Gomaa/OpenCouncil/archive/refs/heads/main.tar.gz
 opencouncil
 ```
 
-The published archive includes the production server and static UI artifacts, so
-installation does not compile the app. `opencouncil` serves the API + UI on one
-port (default 4311).
+The archive includes the production server and static UI, so installation does
+not compile Next.js. Prefer a tagged release archive (`…/refs/tags/vX.Y.Z.tar.gz`)
+when you want a pinned version.
 
 > **Use the archive URL, not `npm install -g github:Zeyad-Gomaa/OpenCouncil`.**
 > npm installs a global git dependency by symlinking it into `~/.npm/_cacache/tmp`,
@@ -53,11 +66,10 @@ port (default 4311).
 The executable also supports headless workflows. `opencouncil --version` reads
 the package manifest, and invalid flags fail with exit code 2.
 
-**Run without installing globally:**
+**Rebuild from source** (after changing the UI or server):
 
 ```bash
-git clone https://github.com/Zeyad-Gomaa/OpenCouncil.git
-cd OpenCouncil && npm install && npm run build
+npm run build
 npm start                 # or: npx opencouncil
 ```
 
@@ -134,6 +146,8 @@ at startup and are recorded in `schema_migrations`.
 ## The Chamber
 
 - Live transcript grouped by round; every message shows tokens, latency and cost.
+- Each session starts with live web research (DuckDuckGo, then Wikipedia; Tavily
+  or Brave if you set an API key).
 - Member rail with live status dots (thinking / speaking / done / error).
 - Synthesis pinned at the top once the moderator concludes.
 - Cancel any running session; failed members don't kill the council.

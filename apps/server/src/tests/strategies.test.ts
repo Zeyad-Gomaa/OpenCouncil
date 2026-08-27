@@ -41,6 +41,17 @@ describe('strategies', () => {
     expect(formattedForVisionary).toContain('[@Pragmatist in Round 1]:')
   })
 
+  it('extraGroundingFromTranscript keeps web research and user directives only', async () => {
+    const { extraGroundingFromTranscript } = await import('../engine/runner.js')
+    const transcript = [
+      { speaker: 'Web Research', memberId: 'system_web', round: 0, content: 'Source A' },
+      { speaker: 'Visionary', memberId: 'm1', round: 1, content: 'Dream big.' },
+      { speaker: 'User Directive', memberId: 'user', round: 1, content: 'Focus on latency.' },
+    ]
+    const grounding = extraGroundingFromTranscript(transcript)
+    expect(grounding.map((e) => e.memberId)).toEqual(['system_web', 'user'])
+  })
+
   it('formatSearchResults generates clean citations and summaries', async () => {
     const { formatSearchResults } = await import('../engine/web-search.js')
     const formatted = formatSearchResults([

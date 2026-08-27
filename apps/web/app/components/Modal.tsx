@@ -8,9 +8,10 @@ interface ModalProps {
   title: string
   children: React.ReactNode
   actions?: React.ReactNode
+  wide?: boolean
 }
 
-export default function Modal({ open, onClose, title, children, actions }: ModalProps) {
+export default function Modal({ open, onClose, title, children, actions, wide }: ModalProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -33,7 +34,7 @@ export default function Modal({ open, onClose, title, children, actions }: Modal
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal ${wide ? 'wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{title}</h2>
           <button className="ghost sm" onClick={onClose} aria-label="Close">

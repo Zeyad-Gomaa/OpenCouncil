@@ -4,10 +4,18 @@ import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { encryptSecret } from '../vault/crypto.js'
 import { AppError } from '../lib/errors.js'
-import { modelCreateSchema, modelUpdateSchema, providerCreateSchema, providerUpdateSchema } from '@opencouncil/shared'
+import {
+  catalogEnrollSchema,
+  modelCreateSchema,
+  modelUpdateSchema,
+  providerCreateSchema,
+  providerUpdateSchema,
+} from '@opencouncil/shared'
 import { logActivity, modelToDTO, providerToDTO } from './mappers.js'
 import { getAdapter } from '../providers/registry.js'
 import { decryptSecret } from '../vault/crypto.js'
+import { fetchProviderCatalog } from '../providers/catalog.js'
+import { mapProviderError } from '../lib/errors.js'
 
 const PROVIDER_PRESETS: Record<string, { protocol: string; baseUrl?: string }> = {
   openai: { protocol: 'openai_compatible', baseUrl: 'https://api.openai.com/v1' },
@@ -70,16 +78,103 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
     }
   })
 
+  async function catalogForProvider(id: string) {
+    const provider = db.prepare('SELECT * FROM providers WHERE id=?').get(id) as
+      | {
+          id: string
+          name: string
+          protocol: 'openai_compatible' | 'anthropic' | 'google' | 'mock'
+          base_url: string | null
+          api_key_encrypted: string | null
+        }
+      | undefined
+    if (!provider) throw new AppError(404, 'not_found', 'provider not found')
+    try {
+      const catalog = await fetchProviderCatalog({
+        protocol: provider.protocol,
+        name: provider.name,
+        baseUrl: provider.base_url,
+        apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : null,
+      })
+      const enrolled = new Set(
+        (
+          db.prepare('SELECT model_id FROM models WHERE provider_id=?').all(id) as {
+            model_id: string
+          }[]
+        ).map((r) => r.model_id),
+      )
+      return {
+        ...catalog,
+        models: catalog.models.map((m) => ({ ...m, enrolled: enrolled.has(m.modelId) })),
+      }
+    } catch (err) {
+      throw mapProviderError(err)
+    }
+  }
+
+  app.get('/api/v1/providers/:id/catalog', async (req) => {
+    const { id } = req.params as { id: string }
+    return catalogForProvider(id)
+  })
+
   app.post('/api/v1/providers/:id/discover-models', async (req) => {
     const { id } = req.params as { id: string }
-    const provider = db.prepare('SELECT protocol FROM providers WHERE id=?').get(id) as { protocol: string } | undefined
-    if (!provider) throw new AppError(404, 'not_found', 'provider not found')
-    const models = db
-      .prepare(
-        'SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name',
+    return catalogForProvider(id)
+  })
+
+  app.post('/api/v1/providers/:id/catalog/enroll', async (req) => {
+    const { id } = req.params as { id: string }
+    const body = catalogEnrollSchema.parse(req.body ?? {})
+    const catalog = await catalogForProvider(id)
+    if (!catalog.supported) throw new AppError(400, 'unsupported', catalog.reason || 'catalog unavailable')
+    const wanted = new Set(body.modelIds)
+    const picks = catalog.models.filter((m) => wanted.has(m.modelId))
+    if (picks.length === 0) throw new AppError(400, 'not_found', 'none of those model ids are in the live catalog')
+
+    let created = 0
+    let updated = 0
+    db.exec('BEGIN')
+    try {
+      const insert = db.prepare(
+        `INSERT INTO models (id, provider_id, model_id, display_name, context_window, input_per_mtok_usd, output_per_mtok_usd, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       )
-      .all(id)
-    return { supported: false, reason: 'automatic discovery is unavailable for this provider adapter', models }
+      const update = db.prepare(
+        `UPDATE models SET display_name=?, context_window=?, input_per_mtok_usd=?, output_per_mtok_usd=?
+         WHERE provider_id=? AND model_id=?`,
+      )
+      const existing = db.prepare('SELECT id FROM models WHERE provider_id=? AND model_id=?')
+      for (const m of picks) {
+        const row = existing.get(id, m.modelId) as { id: string } | undefined
+        if (row) {
+          update.run(m.displayName.slice(0, 120), m.contextWindow, m.inputPerMTokUsd, m.outputPerMTokUsd, id, m.modelId)
+          updated++
+        } else {
+          insert.run(
+            randomUUID(),
+            id,
+            m.modelId,
+            m.displayName.slice(0, 120),
+            m.contextWindow,
+            m.inputPerMTokUsd,
+            m.outputPerMTokUsd,
+          )
+          created++
+        }
+      }
+      logActivity(db, 'models.enrolled', { providerId: id, created, updated })
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    const models = (
+      db.prepare('SELECT * FROM models WHERE provider_id=? ORDER BY display_name').all(id) as Parameters<
+        typeof modelToDTO
+      >[0][]
+    ).map(modelToDTO)
+    return { created, updated, models }
   })
 
   app.get('/api/v1/providers', async () => {

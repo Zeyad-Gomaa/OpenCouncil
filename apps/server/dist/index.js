@@ -97,6 +97,7 @@ var init_http = __esm({
       constructor(status, body) {
         super(`provider HTTP ${status}: ${body.slice(0, 300)}`);
         this.status = status;
+        this.body = body;
         this.name = "ProviderHttpError";
       }
     };
@@ -354,7 +355,7 @@ var init_events = __esm({
 
 // packages/shared/dist/schemas.js
 import { z as z2 } from "zod";
-var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, sessionInterveneSchema, configImportSchema;
+var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, catalogEnrollSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, sessionInterveneSchema, configImportSchema;
 var init_schemas = __esm({
   "packages/shared/dist/schemas.js"() {
     "use strict";
@@ -385,6 +386,9 @@ var init_schemas = __esm({
       enabled: z2.boolean().optional()
     });
     modelUpdateSchema = modelCreateSchema.partial().omit({ providerId: true });
+    catalogEnrollSchema = z2.object({
+      modelIds: z2.array(z2.string().min(1).max(200)).min(1).max(500)
+    });
     memberCreateSchema = z2.object({
       name: z2.string().min(1).max(60),
       modelId: z2.string().uuid(),
@@ -572,6 +576,279 @@ var init_mappers = __esm({
   }
 });
 
+// apps/server/src/providers/catalog.ts
+function isLocalBaseUrl(baseUrl) {
+  if (!baseUrl) return false;
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return /localhost|127\.0\.0\.1/.test(baseUrl);
+  }
+}
+function providerHint(name, baseUrl) {
+  const s = `${name} ${baseUrl ?? ""}`.toLowerCase();
+  if (s.includes("openrouter")) return "openrouter";
+  if (s.includes("together")) return "together";
+  if (s.includes("groq")) return "groq";
+  if (s.includes("mistral")) return "mistralai";
+  if (s.includes("deepseek")) return "deepseek";
+  if (s.includes("x.ai") || /\bxai\b/.test(s) || s.includes("x-ai")) return "x-ai";
+  if (s.includes("anthropic")) return "anthropic";
+  if (s.includes("googleapis") || s.includes("gemini") || /\bgoogle\b/.test(s)) return "google";
+  if (s.includes("openai.com") || /\bopenai\b/.test(s)) return "openai";
+  if (s.includes("ollama")) return "ollama";
+  return null;
+}
+function perTokenUsdToPerMillion(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Number((n * 1e6).toFixed(6));
+}
+function asPerMillion(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Number(n.toFixed(6));
+}
+function isChatModel(modelId, displayName = "") {
+  return !SKIP_MODEL.test(`${modelId} ${displayName}`);
+}
+function parseOpenRouterModels(payload) {
+  const rows = Array.isArray(payload) ? payload : payload?.data ?? [];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row;
+    if (!r.id) continue;
+    if (!isChatModel(r.id, r.name)) continue;
+    out.push({
+      modelId: r.id,
+      displayName: r.name || r.id,
+      contextWindow: Number.isFinite(r.context_length) ? Number(r.context_length) : null,
+      inputPerMTokUsd: perTokenUsdToPerMillion(r.pricing?.prompt),
+      outputPerMTokUsd: perTokenUsdToPerMillion(r.pricing?.completion)
+    });
+  }
+  return out;
+}
+function parseOpenAICompatibleModels(payload) {
+  const rows = Array.isArray(payload) ? payload : payload?.data ?? [];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row;
+    if (!r.id) continue;
+    const display = r.display_name || r.name || r.id;
+    if (!isChatModel(r.id, display)) continue;
+    const ctx = r.context_window ?? r.context_length ?? r.max_model_len;
+    const input = r.pricing?.input ?? r.pricing?.prompt;
+    const output = r.pricing?.output ?? r.pricing?.completion;
+    out.push({
+      modelId: r.id,
+      displayName: display,
+      contextWindow: Number.isFinite(ctx) ? Number(ctx) : null,
+      inputPerMTokUsd: input == null ? null : asPerMillion(input),
+      outputPerMTokUsd: output == null ? null : asPerMillion(output)
+    });
+  }
+  return out;
+}
+function parseAnthropicModels(payload) {
+  const rows = Array.isArray(payload) ? payload : payload?.data ?? [];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row;
+    if (!r.id) continue;
+    out.push({
+      modelId: r.id,
+      displayName: r.display_name || r.id,
+      contextWindow: 2e5,
+      inputPerMTokUsd: null,
+      outputPerMTokUsd: null
+    });
+  }
+  return out;
+}
+function parseGoogleModels(payload) {
+  const rows = Array.isArray(payload) ? payload : payload?.models ?? [];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row;
+    const methods = r.supportedGenerationMethods ?? [];
+    if (methods.length > 0 && !methods.includes("generateContent")) continue;
+    const raw = r.name || "";
+    const modelId = raw.replace(/^models\//, "");
+    if (!modelId) continue;
+    if (!isChatModel(modelId, r.displayName)) continue;
+    out.push({
+      modelId,
+      displayName: r.displayName || modelId,
+      contextWindow: Number.isFinite(r.inputTokenLimit) ? Number(r.inputTokenLimit) : null,
+      inputPerMTokUsd: null,
+      outputPerMTokUsd: null
+    });
+  }
+  return out;
+}
+function staticPriceFor(modelId) {
+  for (const row of STATIC_PRICES) {
+    if (row.test.test(modelId)) return { input: row.input, output: row.output };
+  }
+  return null;
+}
+function matchOverlayModel(overlay, modelId, hint) {
+  const exact = overlay.find((m) => m.modelId === modelId);
+  if (exact) return exact;
+  if (hint) {
+    const prefixed = overlay.find((m) => m.modelId === `${hint}/${modelId}`);
+    if (prefixed) return prefixed;
+  }
+  const suffix = overlay.filter((m) => m.modelId.endsWith(`/${modelId}`));
+  if (suffix.length === 1) return suffix[0];
+  if (hint) {
+    const variants = overlay.filter(
+      (m) => m.modelId.startsWith(`${hint}/${modelId}-`) || m.modelId.startsWith(`${hint}/${modelId}:`)
+    );
+    if (variants.length > 0) {
+      variants.sort((a, b) => a.modelId.length - b.modelId.length);
+      return variants[0];
+    }
+  }
+  if (suffix.length > 1) {
+    suffix.sort((a, b) => a.modelId.length - b.modelId.length);
+    return suffix[0];
+  }
+  return null;
+}
+function applyPricing(models, overlay, hint) {
+  return models.map((m) => {
+    if (m.inputPerMTokUsd != null && m.outputPerMTokUsd != null) return m;
+    const hit = matchOverlayModel(overlay, m.modelId, hint);
+    const fallback = staticPriceFor(m.modelId);
+    return {
+      ...m,
+      contextWindow: m.contextWindow ?? hit?.contextWindow ?? null,
+      inputPerMTokUsd: m.inputPerMTokUsd ?? hit?.inputPerMTokUsd ?? fallback?.input ?? null,
+      outputPerMTokUsd: m.outputPerMTokUsd ?? hit?.outputPerMTokUsd ?? fallback?.output ?? null
+    };
+  });
+}
+async function fetchOpenRouterOverlay(apiKey) {
+  if (overlayCache && Date.now() - overlayCache.at < OVERLAY_TTL_MS) return overlayCache.models;
+  try {
+    const payload = await httpJson(OPENROUTER_MODELS_URL, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        ...apiKey ? { authorization: `Bearer ${apiKey}` } : {}
+      },
+      timeoutMs: CATALOG_TIMEOUT_MS
+    });
+    const models = parseOpenRouterModels(payload);
+    overlayCache = { at: Date.now(), models };
+    return models;
+  } catch {
+    return overlayCache?.models ?? [];
+  }
+}
+async function fetchProviderCatalog(opts) {
+  if (opts.protocol === "mock") {
+    return { supported: false, source: "mock", reason: "the mock adapter has no live catalog", models: [] };
+  }
+  const hint = providerHint(opts.name, opts.baseUrl);
+  const adapterBase = opts.baseUrl?.replace(/\/$/, "") || (opts.protocol === "anthropic" ? "https://api.anthropic.com" : opts.protocol === "google" ? "https://generativelanguage.googleapis.com" : "https://api.openai.com/v1");
+  const needsKey = !isLocalBaseUrl(adapterBase) && hint !== "openrouter";
+  if (needsKey && !opts.apiKey) {
+    return {
+      supported: true,
+      source: hint || opts.protocol,
+      reason: "add an API key to list live models from this provider",
+      models: []
+    };
+  }
+  let models = [];
+  let source = hint || opts.protocol;
+  if (opts.protocol === "anthropic") {
+    const payload = await httpJson(`${adapterBase}/v1/models`, {
+      method: "GET",
+      headers: {
+        "x-api-key": opts.apiKey ?? "",
+        "anthropic-version": "2023-06-01",
+        accept: "application/json"
+      },
+      timeoutMs: CATALOG_TIMEOUT_MS
+    });
+    models = parseAnthropicModels(payload);
+    source = "anthropic";
+  } else if (opts.protocol === "google") {
+    const payload = await httpJson(`${adapterBase}/v1beta/models?pageSize=200`, {
+      method: "GET",
+      headers: { "x-goog-api-key": opts.apiKey ?? "", accept: "application/json" },
+      timeoutMs: CATALOG_TIMEOUT_MS
+    });
+    models = parseGoogleModels(payload);
+    source = "google";
+  } else {
+    const payload = await httpJson(`${adapterBase}/models`, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        ...opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}
+      },
+      timeoutMs: CATALOG_TIMEOUT_MS
+    });
+    models = hint === "openrouter" ? parseOpenRouterModels(payload) : parseOpenAICompatibleModels(payload);
+    source = hint === "openrouter" ? "openrouter" : hint || "openai_compatible";
+  }
+  const local = isLocalBaseUrl(adapterBase);
+  const overlay = local || hint === "openrouter" ? [] : await fetchOpenRouterOverlay(hint === "openrouter" ? opts.apiKey ?? void 0 : void 0);
+  const priced = applyPricing(models, overlay, hint);
+  priced.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return { supported: true, source, models: priced };
+}
+var OPENROUTER_MODELS_URL, OVERLAY_TTL_MS, CATALOG_TIMEOUT_MS, SKIP_MODEL, overlayCache, STATIC_PRICES;
+var init_catalog = __esm({
+  "apps/server/src/providers/catalog.ts"() {
+    "use strict";
+    init_http();
+    OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+    OVERLAY_TTL_MS = 30 * 60 * 1e3;
+    CATALOG_TIMEOUT_MS = 12e3;
+    SKIP_MODEL = /embed|whisper|tts|dall-e|moderation|babbage|davinci-002|sora|transcribe|omni-moderation|text-embedding|image-preview/i;
+    overlayCache = null;
+    STATIC_PRICES = [
+      { test: /gpt-4o-mini/i, input: 0.15, output: 0.6 },
+      { test: /gpt-4o/i, input: 2.5, output: 10 },
+      { test: /gpt-4\.1-nano/i, input: 0.1, output: 0.4 },
+      { test: /gpt-4\.1-mini/i, input: 0.4, output: 1.6 },
+      { test: /gpt-4\.1/i, input: 2, output: 8 },
+      { test: /gpt-5-mini/i, input: 0.25, output: 2 },
+      { test: /gpt-5-nano/i, input: 0.05, output: 0.4 },
+      { test: /gpt-5/i, input: 1.25, output: 10 },
+      { test: /o3-mini/i, input: 1.1, output: 4.4 },
+      { test: /o4-mini/i, input: 1.1, output: 4.4 },
+      { test: /\bo3\b/i, input: 2, output: 8 },
+      { test: /claude-haiku-4|claude-4-haiku/i, input: 0.8, output: 4 },
+      { test: /claude-3-5-haiku|claude-haiku-3-5/i, input: 0.8, output: 4 },
+      { test: /claude-3-haiku/i, input: 0.25, output: 1.25 },
+      { test: /claude-sonnet-4/i, input: 3, output: 15 },
+      { test: /claude-3-5-sonnet|claude-sonnet-3-5/i, input: 3, output: 15 },
+      { test: /claude-opus-4/i, input: 15, output: 75 },
+      { test: /claude-3-opus/i, input: 15, output: 75 },
+      { test: /gemini-2\.5-pro/i, input: 1.25, output: 10 },
+      { test: /gemini-2\.5-flash/i, input: 0.3, output: 2.5 },
+      { test: /gemini-2\.0-flash/i, input: 0.1, output: 0.4 },
+      { test: /gemini-1\.5-pro/i, input: 1.25, output: 5 },
+      { test: /gemini-1\.5-flash/i, input: 0.075, output: 0.3 },
+      { test: /deepseek-chat/i, input: 0.27, output: 1.1 },
+      { test: /grok-3-mini/i, input: 0.3, output: 0.5 },
+      { test: /grok-3/i, input: 3, output: 15 }
+    ];
+  }
+});
+
 // apps/server/src/routes/providers.ts
 var providers_exports = {};
 __export(providers_exports, {
@@ -610,14 +887,82 @@ function registerProviderRoutes(app, db) {
       };
     }
   });
+  async function catalogForProvider(id) {
+    const provider = db.prepare("SELECT * FROM providers WHERE id=?").get(id);
+    if (!provider) throw new AppError(404, "not_found", "provider not found");
+    try {
+      const catalog = await fetchProviderCatalog({
+        protocol: provider.protocol,
+        name: provider.name,
+        baseUrl: provider.base_url,
+        apiKey: provider.api_key_encrypted ? decryptSecret(provider.api_key_encrypted) : null
+      });
+      const enrolled = new Set(
+        db.prepare("SELECT model_id FROM models WHERE provider_id=?").all(id).map((r) => r.model_id)
+      );
+      return {
+        ...catalog,
+        models: catalog.models.map((m) => ({ ...m, enrolled: enrolled.has(m.modelId) }))
+      };
+    } catch (err) {
+      throw mapProviderError(err);
+    }
+  }
+  app.get("/api/v1/providers/:id/catalog", async (req) => {
+    const { id } = req.params;
+    return catalogForProvider(id);
+  });
   app.post("/api/v1/providers/:id/discover-models", async (req) => {
     const { id } = req.params;
-    const provider = db.prepare("SELECT protocol FROM providers WHERE id=?").get(id);
-    if (!provider) throw new AppError(404, "not_found", "provider not found");
-    const models = db.prepare(
-      "SELECT id, model_id AS modelId, display_name AS displayName FROM models WHERE provider_id=? ORDER BY display_name"
-    ).all(id);
-    return { supported: false, reason: "automatic discovery is unavailable for this provider adapter", models };
+    return catalogForProvider(id);
+  });
+  app.post("/api/v1/providers/:id/catalog/enroll", async (req) => {
+    const { id } = req.params;
+    const body = catalogEnrollSchema.parse(req.body ?? {});
+    const catalog = await catalogForProvider(id);
+    if (!catalog.supported) throw new AppError(400, "unsupported", catalog.reason || "catalog unavailable");
+    const wanted = new Set(body.modelIds);
+    const picks = catalog.models.filter((m) => wanted.has(m.modelId));
+    if (picks.length === 0) throw new AppError(400, "not_found", "none of those model ids are in the live catalog");
+    let created = 0;
+    let updated = 0;
+    db.exec("BEGIN");
+    try {
+      const insert = db.prepare(
+        `INSERT INTO models (id, provider_id, model_id, display_name, context_window, input_per_mtok_usd, output_per_mtok_usd, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+      );
+      const update = db.prepare(
+        `UPDATE models SET display_name=?, context_window=?, input_per_mtok_usd=?, output_per_mtok_usd=?
+         WHERE provider_id=? AND model_id=?`
+      );
+      const existing = db.prepare("SELECT id FROM models WHERE provider_id=? AND model_id=?");
+      for (const m of picks) {
+        const row = existing.get(id, m.modelId);
+        if (row) {
+          update.run(m.displayName.slice(0, 120), m.contextWindow, m.inputPerMTokUsd, m.outputPerMTokUsd, id, m.modelId);
+          updated++;
+        } else {
+          insert.run(
+            randomUUID2(),
+            id,
+            m.modelId,
+            m.displayName.slice(0, 120),
+            m.contextWindow,
+            m.inputPerMTokUsd,
+            m.outputPerMTokUsd
+          );
+          created++;
+        }
+      }
+      logActivity(db, "models.enrolled", { providerId: id, created, updated });
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    const models = db.prepare("SELECT * FROM models WHERE provider_id=? ORDER BY display_name").all(id).map(modelToDTO);
+    return { created, updated, models };
   });
   app.get("/api/v1/providers", async () => {
     const rows = db.prepare("SELECT * FROM providers ORDER BY created_at").all();
@@ -759,6 +1104,8 @@ var init_providers = __esm({
     init_mappers();
     init_registry();
     init_crypto();
+    init_catalog();
+    init_errors();
     PROVIDER_PRESETS = {
       openai: { protocol: "openai_compatible", baseUrl: "https://api.openai.com/v1" },
       openrouter: { protocol: "openai_compatible", baseUrl: "https://openrouter.ai/api/v1" },
@@ -1902,7 +2249,7 @@ var SYNTHESIS_SYSTEM_PROMPT = `You are the moderator of an AI council. You have 
 1. Identify the core points of AGREEMENT across members.
 2. Note material disagreements and state how they were resolved.
 3. Deliver ONE clear, actionable, authoritative final synthesis representing the council's consensus.
-4. Use rich Markdown structuring (headings, key takeaways, summary tables, citation links). If helpful to explain the consensus architecture or workflow, include a Mermaid diagram (\`\`\`mermaid ... \`\`\`).
+4. Use rich Markdown structuring (headings, key takeaways, summary tables, citation links). If a simple flowchart helps, include a Mermaid diagram with alphanumeric node IDs and bracketed labels (never use "end" as a node id).
 
 Be concise, rigorous, and direct. Do not mention that you are an AI.`;
 function buildSynthesisMessages(topic, transcript) {
@@ -1941,173 +2288,221 @@ var USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/53
 async function searchWeb(query, maxResults = 5, timeoutMs = 8e3) {
   const cleanQuery = query.trim().slice(0, 400);
   if (!cleanQuery) return [];
+  const started = Date.now();
+  const remain = () => Math.max(800, timeoutMs - (Date.now() - started));
+  const backends = [];
   if (process.env.TAVILY_API_KEY) {
-    try {
-      const res = await searchTavily(cleanQuery, process.env.TAVILY_API_KEY, maxResults, timeoutMs);
-      if (res.length > 0) return res;
-    } catch {
-    }
+    backends.push(() => searchTavily(cleanQuery, process.env.TAVILY_API_KEY, maxResults, remain()));
   }
   if (process.env.BRAVE_API_KEY) {
-    try {
-      const res = await searchBrave(cleanQuery, process.env.BRAVE_API_KEY, maxResults, timeoutMs);
-      if (res.length > 0) return res;
-    } catch {
-    }
+    backends.push(() => searchBrave(cleanQuery, process.env.BRAVE_API_KEY, maxResults, remain()));
   }
   if (process.env.SEARXNG_URL) {
+    backends.push(() => searchSearXNG(cleanQuery, process.env.SEARXNG_URL, maxResults, remain()));
+  }
+  backends.push(() => searchDuckDuckGo(cleanQuery, maxResults, remain()));
+  backends.push(() => searchWikipedia(cleanQuery, maxResults, remain()));
+  for (const run of backends) {
+    if (remain() < 400) break;
     try {
-      const res = await searchSearXNG(cleanQuery, process.env.SEARXNG_URL, maxResults, timeoutMs);
-      if (res.length > 0) return res;
+      const res = (await run()).filter((r) => r.title && r.url.startsWith("http"));
+      if (res.length > 0) return res.slice(0, maxResults);
     } catch {
     }
   }
+  return [];
+}
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await searchDuckDuckGo(cleanQuery, maxResults, timeoutMs);
-  } catch {
-    return [];
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 async function searchTavily(query, apiKey, maxResults, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch("https://api.tavily.com/search", {
+  const res = await fetchWithTimeout(
+    "https://api.tavily.com/search",
+    {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults }),
-      signal: controller.signal
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || "Web Result",
-      url: r.url || "",
-      snippet: (r.content || "").slice(0, 300)
-    }));
-  } finally {
-    clearTimeout(timer);
-  }
+      body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults })
+    },
+    timeoutMs
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || "Web Result",
+    url: r.url || "",
+    snippet: (r.content || "").slice(0, 300)
+  }));
 }
 async function searchBrave(query, apiKey, maxResults, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
-      {
-        headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
-        signal: controller.signal
-      }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || "Web Result",
-      url: r.url || "",
-      snippet: (r.description || "").slice(0, 300)
-    }));
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await fetchWithTimeout(
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
+    { headers: { "X-Subscription-Token": apiKey, Accept: "application/json" } },
+    timeoutMs
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || "Web Result",
+    url: r.url || "",
+    snippet: (r.description || "").slice(0, 300)
+  }));
 }
 async function searchSearXNG(query, baseUrl, maxResults, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const url = new URL("/search", baseUrl);
-    url.searchParams.set("q", query);
-    url.searchParams.set("format", "json");
-    const res = await fetch(url.toString(), { signal: controller.signal });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || "Web Result",
-      url: r.url || "",
-      snippet: (r.content || "").slice(0, 300)
-    }));
-  } finally {
-    clearTimeout(timer);
-  }
+  const url = new URL("/search", baseUrl);
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "json");
+  const res = await fetchWithTimeout(url.toString(), {}, timeoutMs);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || "Web Result",
+    url: r.url || "",
+    snippet: (r.content || "").slice(0, 300)
+  }));
 }
 async function searchDuckDuckGo(query, maxResults, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch("https://html.duckduckgo.com/html/", {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "user-agent": USER_AGENT
-      },
-      body: new URLSearchParams({ q: query, b: "" }).toString(),
-      signal: controller.signal
-    });
-    if (!res.ok) return [];
-    const html = await res.text();
-    const results = [];
-    const blockRegex = /<div class="result__body">([\s\S]*?)<\/div>\s*<\/div>/gi;
-    let match;
-    while ((match = blockRegex.exec(html)) !== null && results.length < maxResults) {
-      const block = match[1] ?? "";
-      const titleMatch = /<a[^>]*class="result__url"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
-      const linkMatch = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
-      const snippetMatch = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
-      const rawUrl = linkMatch?.[1] || titleMatch?.[1] || "";
-      const rawTitle = linkMatch?.[2] || titleMatch?.[2] || "";
-      const rawSnippet = snippetMatch?.[1] || "";
-      let cleanUrl = rawUrl;
-      if (rawUrl.includes("uddg=")) {
-        try {
-          const matchUddg = /uddg=([^&]+)/.exec(rawUrl);
-          if (matchUddg && matchUddg[1]) {
-            cleanUrl = decodeURIComponent(matchUddg[1]);
-          }
-        } catch {
-        }
-      }
-      const cleanTitle = stripHtml(rawTitle).trim();
-      const cleanSnippet = stripHtml(rawSnippet).trim();
-      if (cleanTitle && cleanSnippet && cleanUrl.startsWith("http")) {
-        results.push({
-          title: cleanTitle,
-          url: cleanUrl,
-          snippet: cleanSnippet
-        });
-      }
+  const htmlAttempts = [
+    async () => {
+      const res = await fetchWithTimeout(
+        "https://html.duckduckgo.com/html/",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "user-agent": USER_AGENT
+          },
+          body: new URLSearchParams({ q: query, b: "" }).toString()
+        },
+        timeoutMs
+      );
+      return res.ok ? await res.text() : "";
+    },
+    async () => {
+      const res = await fetchWithTimeout(
+        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+        { headers: { "user-agent": USER_AGENT } },
+        timeoutMs
+      );
+      return res.ok ? await res.text() : "";
+    },
+    async () => {
+      const res = await fetchWithTimeout(
+        `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+        { headers: { "user-agent": USER_AGENT } },
+        timeoutMs
+      );
+      return res.ok ? await res.text() : "";
     }
-    if (results.length > 0) return results;
-    const apiRes = await fetch(
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-      {
-        headers: { "user-agent": USER_AGENT },
-        signal: controller.signal
-      }
-    );
-    if (apiRes.ok) {
-      const data = await apiRes.json();
-      if (data.AbstractText && data.AbstractURL) {
-        results.push({
-          title: data.Heading || query,
-          url: data.AbstractURL,
-          snippet: data.AbstractText.slice(0, 300)
-        });
-      }
-      for (const topic of data.RelatedTopics || []) {
-        if (results.length >= maxResults) break;
-        if (topic.Text && topic.FirstURL) {
-          results.push({
-            title: topic.Text.split(" - ")[0] || query,
-            url: topic.FirstURL,
-            snippet: topic.Text.slice(0, 300)
-          });
-        }
-      }
+  ];
+  for (const attempt of htmlAttempts) {
+    try {
+      const html = await attempt();
+      const parsed = parseDuckDuckGoHtml(html, maxResults);
+      if (parsed.length > 0) return parsed;
+    } catch {
     }
-    return results;
-  } finally {
-    clearTimeout(timer);
   }
+  const apiRes = await fetchWithTimeout(
+    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+    { headers: { "user-agent": USER_AGENT } },
+    timeoutMs
+  );
+  if (!apiRes.ok) return [];
+  const data = await apiRes.json().catch(() => null);
+  if (!data) return [];
+  const results = [];
+  if (data.AbstractText && data.AbstractURL) {
+    results.push({
+      title: data.Heading || query,
+      url: data.AbstractURL,
+      snippet: data.AbstractText.slice(0, 300)
+    });
+  }
+  const topics = (data.RelatedTopics || []).flatMap((t) => t.Topics ? t.Topics : [t]);
+  for (const topic of topics) {
+    if (results.length >= maxResults) break;
+    if (topic.Text && topic.FirstURL) {
+      results.push({
+        title: topic.Text.split(" - ")[0] || query,
+        url: topic.FirstURL,
+        snippet: topic.Text.slice(0, 300)
+      });
+    }
+  }
+  return results;
+}
+function parseDuckDuckGoHtml(html, maxResults) {
+  if (!html) return [];
+  const results = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (rawUrl, rawTitle, rawSnippet) => {
+    const cleanUrl = decodeDdgUrl(rawUrl);
+    const cleanTitle = stripHtml(rawTitle).trim();
+    const cleanSnippet = stripHtml(rawSnippet).trim();
+    if (!cleanTitle || !cleanUrl.startsWith("http") || seen.has(cleanUrl)) return;
+    seen.add(cleanUrl);
+    results.push({ title: cleanTitle, url: cleanUrl, snippet: cleanSnippet || cleanTitle });
+  };
+  const blockRegex = /<div class="result__body">([\s\S]*?)<\/div>\s*<\/div>/gi;
+  let match;
+  while ((match = blockRegex.exec(html)) !== null && results.length < maxResults) {
+    const block = match[1] ?? "";
+    const titleMatch = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+    const snippetMatch = /<(?:a|td)[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|td)>/i.exec(block);
+    if (titleMatch) push(titleMatch[1] || "", titleMatch[2] || "", snippetMatch?.[1] || "");
+  }
+  if (results.length === 0) {
+    const liteLink = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippets = [...html.matchAll(/<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1] || "");
+    let i = 0;
+    while ((match = liteLink.exec(html)) !== null && results.length < maxResults) {
+      push(match[1] || "", match[2] || "", snippets[i] || "");
+      i++;
+    }
+  }
+  if (results.length === 0) {
+    const generic = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    while ((match = generic.exec(html)) !== null && results.length < maxResults) {
+      push(match[1] || "", match[2] || "", "");
+    }
+  }
+  return results.slice(0, maxResults);
+}
+async function searchWikipedia(query, maxResults = 5, timeoutMs = 5e3) {
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${maxResults}&utf8=&format=json&origin=*`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { "user-agent": USER_AGENT, accept: "application/json" } },
+    timeoutMs
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.query?.search ?? []).slice(0, maxResults).map((r) => {
+    const title = r.title || "Wikipedia";
+    return {
+      title,
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`,
+      snippet: stripHtml(r.snippet || "").slice(0, 300)
+    };
+  });
+}
+function decodeDdgUrl(rawUrl) {
+  let cleanUrl = rawUrl;
+  if (rawUrl.includes("uddg=")) {
+    try {
+      const matchUddg = /uddg=([^&]+)/.exec(rawUrl);
+      if (matchUddg?.[1]) cleanUrl = decodeURIComponent(matchUddg[1]);
+    } catch {
+    }
+  }
+  if (cleanUrl.startsWith("//")) cleanUrl = `https:${cleanUrl}`;
+  return cleanUrl;
 }
 function stripHtml(html) {
   return html.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
@@ -2132,6 +2527,9 @@ function computeCost(promptTokens, completionTokens, inPrice, outPrice) {
   const inCost = promptTokens / 1e6 * (inPrice ?? 0) || 0;
   const outCost = completionTokens / 1e6 * (outPrice ?? 0) || 0;
   return Number((inCost + outCost).toFixed(6));
+}
+function extraGroundingFromTranscript(transcript) {
+  return transcript.filter((e) => e.memberId === "system_web" || e.memberId === "user");
 }
 function formatTranscriptForMember(transcript, currentMemberId, currentMemberName) {
   return transcript.map((e) => {
@@ -2220,7 +2618,7 @@ var SessionRunner = class {
             kind: "system",
             round: 0,
             roundPosition: 1,
-            content: `\u{1F50D} **Live Web Research Found:**
+            content: `**Live web research**
 
 ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
    ${r.snippet}`).join("\n\n")}`
@@ -2236,10 +2634,35 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
               role: "assistant",
               kind: "system",
               round: 0,
-              content: `\u{1F50D} **Live Web Research Found:**
+              content: `**Live web research**
 
 ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
    ${r.snippet}`).join("\n\n")}`,
+              createdAt: (/* @__PURE__ */ new Date()).toISOString()
+            }
+          });
+        } else {
+          const emptyId = this.deps.insertMessage({
+            sessionId,
+            memberId: null,
+            memberName: "Web Search",
+            kind: "system",
+            round: 0,
+            roundPosition: 1,
+            content: "No live web sources were found for this question. The council will reason from model knowledge."
+          });
+          bus.publish({
+            type: "message.created",
+            sessionId,
+            message: {
+              id: String(emptyId),
+              sessionId,
+              memberId: null,
+              memberName: "Web Search",
+              role: "assistant",
+              kind: "system",
+              round: 0,
+              content: "No live web sources were found for this question. The council will reason from model knowledge.",
               createdAt: (/* @__PURE__ */ new Date()).toISOString()
             }
           });
@@ -2380,7 +2803,7 @@ ${member.systemPrompt}
 3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").
 4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.
 5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.
-6. DIAGRAMS & VISUALS: You can and SHOULD draw Mermaid diagrams (\`\`\`mermaid ... \`\`\`) to illustrate architectures, flows, state transitions, comparison matrices, and trade-offs. You can also embed images (\`![caption](url)\`).
+6. DIAGRAMS: Prefer a simple \`\`\`mermaid flowchart TD\`\`\` when a picture helps. Node IDs must be alphanumeric (no spaces) \u2014 put labels in brackets: Foo[Label with spaces]. Never use the reserved word "end" as a node id. Use <br/> not <br>. Skip a diagram if the syntax would be unclear.
 7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
       );
       messages.push({ role: "system", content: systemPromptParts.join("\n") });
@@ -2395,6 +2818,18 @@ ${member.systemPrompt}
 
 Now respond for Round ${round}. Speak directly to your council peers and advance the deliberation.`
         });
+      } else {
+        const grounding = extraGroundingFromTranscript(transcript);
+        if (grounding.length > 0) {
+          messages.push({
+            role: "system",
+            content: `=== GROUNDING (web research and user directives) ===
+
+` + formatTranscriptForMember(grounding, member.id, member.name) + `
+
+=== END OF GROUNDING ===`
+          });
+        }
       }
       messages.push({ role: "user", content: topic });
     }

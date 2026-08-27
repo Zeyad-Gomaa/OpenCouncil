@@ -333,7 +333,7 @@ function parseBlocks(md: string): Block[] {
       }
       i++ // skip closing fence
       const code = codeLines.join('\n')
-      if (lang === 'mermaid') {
+      if (lang.toLowerCase() === 'mermaid' || lang.toLowerCase().startsWith('mermaid ')) {
         blocks.push({ type: 'mermaid', content: code })
       } else {
         blocks.push({ type: 'code', lang, content: code })

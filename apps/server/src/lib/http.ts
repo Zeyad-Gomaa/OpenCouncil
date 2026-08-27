@@ -12,7 +12,7 @@ export class TimeoutError extends Error {
 export class ProviderHttpError extends Error {
   constructor(
     public status: number,
-    body: string,
+    public body: string,
   ) {
     super(`provider HTTP ${status}: ${body.slice(0, 300)}`)
     this.name = 'ProviderHttpError'

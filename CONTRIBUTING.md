@@ -12,9 +12,9 @@ module, so there is no native addon to compile.
 ```bash
 git clone https://github.com/Zeyad-Gomaa/OpenCouncil.git
 cd OpenCouncil
-npm install
-npm run build       # shared → server → web
-npm run dev         # API on :4311, chamber UI on :3000
+npm install         # installs deps; builds if prebuilt artifacts are missing
+npx opencouncil     # API + UI on :4311
+npm run dev         # API on :4311, chamber UI on :3000 (hot reload)
 ```
 
 `npm run dev` builds the shared package and the server bundle, then runs the

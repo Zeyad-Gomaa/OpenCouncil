@@ -6,7 +6,7 @@ export const SYNTHESIS_SYSTEM_PROMPT = `You are the moderator of an AI council. 
 1. Identify the core points of AGREEMENT across members.
 2. Note material disagreements and state how they were resolved.
 3. Deliver ONE clear, actionable, authoritative final synthesis representing the council's consensus.
-4. Use rich Markdown structuring (headings, key takeaways, summary tables, citation links). If helpful to explain the consensus architecture or workflow, include a Mermaid diagram (\`\`\`mermaid ... \`\`\`).
+4. Use rich Markdown structuring (headings, key takeaways, summary tables, citation links). If a simple flowchart helps, include a Mermaid diagram with alphanumeric node IDs and bracketed labels (never use "end" as a node id).
 
 Be concise, rigorous, and direct. Do not mention that you are an AI.`
 

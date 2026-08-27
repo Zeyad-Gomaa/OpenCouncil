@@ -22,8 +22,8 @@ export default function HomePage() {
     <Suspense
       fallback={
         <div className="chat-hero">
-          <div className="skeleton" style={{ width: 200, height: 32, marginBottom: 12 }} />
-          <div className="skeleton" style={{ width: 340, height: 18 }} />
+          <div className="skeleton" style={{ width: 220, height: 36, marginBottom: 12 }} />
+          <div className="skeleton" style={{ width: 360, height: 18 }} />
         </div>
       }
     >
@@ -86,8 +86,8 @@ function HomeContent() {
   if (!loaded) {
     return (
       <div className="chat-hero">
-        <div className="skeleton" style={{ width: 200, height: 32, marginBottom: 12 }} />
-        <div className="skeleton" style={{ width: 340, height: 18 }} />
+        <div className="skeleton" style={{ width: 220, height: 36, marginBottom: 12 }} />
+        <div className="skeleton" style={{ width: 360, height: 18 }} />
       </div>
     )
   }
@@ -95,14 +95,15 @@ function HomeContent() {
   return (
     <div>
       <div className="chat-hero">
-        <h1>OpenCouncil</h1>
-        <p className="subtitle">Structured deliberation across your configured models.</p>
+        <p className="eyebrow">OpenCouncil</p>
+        <h1>What should the council consider?</h1>
+        <p className="subtitle">Several models research, debate, and agree — live, on your keys.</p>
 
         {councils.length === 0 ? (
-          <div style={{ marginTop: 24 }}>
-            <p className="muted">No councils configured yet.</p>
-            <Link href="/settings" className="btn primary" style={{ marginTop: 12 }}>
-              Go to Configuration →
+          <div style={{ marginTop: 28 }}>
+            <p className="muted">No councils yet. Add a provider and mint a council first.</p>
+            <Link href="/settings" className="btn primary" style={{ marginTop: 16 }}>
+              Open settings
             </Link>
           </div>
         ) : (
@@ -111,6 +112,7 @@ function HomeContent() {
               {councils.map((c) => (
                 <button
                   key={c.id}
+                  type="button"
                   className={`chip ${c.id === councilId ? 'active' : ''}`}
                   onClick={() => setCouncilId(c.id)}
                 >
@@ -122,7 +124,7 @@ function HomeContent() {
             <div className="chat-input-wrap">
               <div className="chat-input-box">
                 <textarea
-                  placeholder="What should the council deliberate on?"
+                  placeholder="Ask anything…"
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
                   onKeyDown={handleKey}
@@ -136,7 +138,7 @@ function HomeContent() {
                   aria-label="Convene council"
                 >
                   {busy ? (
-                    <svg width="18" height="18" viewBox="0 0 18 18" style={{ animation: 'spin 1s linear infinite' }}>
+                    <svg width="16" height="16" viewBox="0 0 18 18" style={{ animation: 'spin 1s linear infinite' }}>
                       <circle
                         cx="9"
                         cy="9"
@@ -149,47 +151,38 @@ function HomeContent() {
                       />
                     </svg>
                   ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M5 12h14M12 5l7 7-7 7" />
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="M5 12h14M13 6l6 6-6 6" />
                     </svg>
                   )}
                 </button>
               </div>
               {selected && (
                 <div className="chat-input-meta">
-                  <span className="muted" style={{ fontSize: '0.78rem' }}>
-                    {selected.strategy === 'debate' ? '⚔ Debate' : '↻ Round Robin'} · {selected.members.length} members
-                    · {selected.rounds} {selected.rounds === 1 ? 'round' : 'rounds'}
+                  <span className="muted">
+                    {selected.strategy === 'debate' ? 'Debate' : 'Round robin'} · {selected.members.length} members ·{' '}
+                    {selected.rounds} {selected.rounds === 1 ? 'round' : 'rounds'}
                     {selected.moderatorMemberId ? ' · Moderated' : ''}
                   </span>
-                  <span className="muted" style={{ fontSize: '0.75rem' }}>
-                    {topic.length > 0 ? `${topic.length} chars` : ''}
-                  </span>
+                  <span className="muted">{topic.length > 0 ? `${topic.length}` : 'Enter to send'}</span>
                 </div>
               )}
             </div>
           </>
         )}
 
-        {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
+        {error && <p className="form-error">{error}</p>}
       </div>
 
       {sessions.length > 0 && (
-        <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ margin: 0 }}>Recent sessions</h2>
-            <Link href="/sessions" style={{ fontSize: '0.82rem' }}>
-              View all →
-            </Link>
+        <div className="home-recent">
+          <div className="home-recent-head">
+            <h2>Recent</h2>
+            <Link href="/sessions">View all</Link>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {sessions.map((s, i) => (
-              <Link
-                key={s.id}
-                href={`/sessions/view/?id=${s.id}`}
-                className="session-card"
-                style={{ animationDelay: `${i * 0.05}s` }}
-              >
+          <div className="home-recent-list">
+            {sessions.map((s) => (
+              <Link key={s.id} href={`/sessions/view/?id=${s.id}`} className="session-card">
                 <div className="session-topic">{s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}</div>
                 <div className="session-meta">
                   <span className={`badge ${s.status}`}>{s.status}</span>

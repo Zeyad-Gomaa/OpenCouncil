@@ -11,5 +11,12 @@ if (!fs.existsSync(source)) {
 }
 
 fs.rmSync(target, { recursive: true, force: true })
-fs.cpSync(source, target, { recursive: true })
+fs.cpSync(source, target, {
+  recursive: true,
+  filter: (src) => {
+    const base = path.basename(src)
+    // macOS/iCloud duplicate folders ("404 2", "_next 3") must not ship.
+    return !/ \d+$/.test(base)
+  },
+})
 console.log(`[opencouncil] copied static UI to ${path.relative(process.cwd(), target)}`)

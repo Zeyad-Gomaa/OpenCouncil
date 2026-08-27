@@ -8,7 +8,17 @@ import ModelCard from '../components/ModelCard'
 import MemberCard from '../components/MemberCard'
 import CouncilCard from '../components/CouncilCard'
 import SearchFilter from '../components/SearchFilter'
-import type { ProviderProtocol, ProviderDTO, ModelDTO, MemberDTO, StrategyKind, CouncilDTO } from '@opencouncil/shared'
+import CatalogPicker from '../components/CatalogPicker'
+import type {
+  ProviderProtocol,
+  ProviderDTO,
+  ModelDTO,
+  MemberDTO,
+  StrategyKind,
+  CouncilDTO,
+  CatalogModel,
+  ProviderCatalogDTO,
+} from '@opencouncil/shared'
 
 const COLORS = ['#818cf8', '#34d399', '#f59e0b', '#f87171', '#60a5fa', '#a78bfa']
 
@@ -59,9 +69,9 @@ export default function SettingsPage() {
     <div>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Administration</p>
-          <h1>Configuration</h1>
-          <p className="subtitle">Manage providers, models, members, and council protocols.</p>
+          <p className="eyebrow">Setup</p>
+          <h1>Settings</h1>
+          <p className="subtitle">Providers, models, members, and councils.</p>
         </div>
       </div>
 
@@ -73,7 +83,9 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === 'providers' && <ProvidersTab providers={providers} reload={loadProviders} />}
+      {tab === 'providers' && (
+        <ProvidersTab providers={providers} reload={loadProviders} onModelsChanged={loadModels} />
+      )}
       {tab === 'models' && <ModelsTab models={models} providers={providers} reload={loadModels} />}
       {tab === 'members' && <MembersTab members={members} models={models} reload={loadMembers} />}
       {tab === 'councils' && <CouncilsTab councils={councils} members={members} reload={loadCouncils} />}
@@ -85,7 +97,15 @@ export default function SettingsPage() {
 /*  Providers                                                          */
 /* ------------------------------------------------------------------ */
 
-function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload: () => void }) {
+function ProvidersTab({
+  providers,
+  reload,
+  onModelsChanged,
+}: {
+  providers: ProviderDTO[]
+  reload: () => void
+  onModelsChanged: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
@@ -95,6 +115,8 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [testNote, setTestNote] = useState<string | null>(null)
+  const [pullFor, setPullFor] = useState<string | null>(null)
 
   useEffect(() => {
     apiGet<{ presets: Preset[] }>('/meta/providers')
@@ -155,9 +177,9 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
   async function handleTest(id: string) {
     try {
       const res = await apiSend<{ ok: boolean; latencyMs: number; message: string }>(`/providers/${id}/test`, 'POST')
-      alert(res.ok ? `✓ Connected (${res.latencyMs}ms)` : `✗ ${res.message}`)
+      setTestNote(res.ok ? `Connected in ${res.latencyMs}ms` : res.message)
     } catch (e) {
-      alert(`Test failed: ${e instanceof Error ? e.message : String(e)}`)
+      setTestNote(`Test failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -166,9 +188,11 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Providers</h2>
         <button className="primary" onClick={openAdd}>
-          + Add Provider
+          Add provider
         </button>
       </div>
+
+      {testNote && <p className="notice">{testNote}</p>}
 
       {providers.length === 0 ? (
         <div className="empty">
@@ -178,7 +202,14 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
       ) : (
         <div className="grid-auto">
           {providers.map((p) => (
-            <ProviderCard key={p.id} provider={p} onDelete={handleDelete} onTest={handleTest} onEdit={openEdit} />
+            <ProviderCard
+              key={p.id}
+              provider={p}
+              onDelete={handleDelete}
+              onTest={handleTest}
+              onEdit={openEdit}
+              onPullModels={(prov) => setPullFor(prov.id)}
+            />
           ))}
         </div>
       )}
@@ -243,6 +274,14 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
 
         {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
       </Modal>
+
+      <CatalogPicker
+        open={!!pullFor}
+        onClose={() => setPullFor(null)}
+        providers={providers}
+        initialProviderId={pullFor ?? undefined}
+        onEnrolled={onModelsChanged}
+      />
     </div>
   )
 }
@@ -263,6 +302,7 @@ function ModelsTab({
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [providerFilter, setProviderFilter] = useState<string | null>(null)
   const [providerId, setProviderId] = useState('')
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -271,22 +311,38 @@ function ModelsTab({
   const [outPrice, setOutPrice] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [pullOpen, setPullOpen] = useState(false)
+  const [catalog, setCatalog] = useState<ProviderCatalogDTO | null>(null)
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [catalogLoading, setCatalogLoading] = useState(false)
 
-  const filtered = models.filter(
-    (m) =>
+  const filtered = models.filter((m) => {
+    if (providerFilter && m.providerId !== providerFilter) return false
+    return (
       m.displayName.toLowerCase().includes(search.toLowerCase()) ||
-      m.modelId.toLowerCase().includes(search.toLowerCase()),
-  )
+      m.modelId.toLowerCase().includes(search.toLowerCase())
+    )
+  })
+
+  function applyCatalogModel(m: CatalogModel) {
+    setModelId(m.modelId)
+    setDisplayName(m.displayName)
+    setCtx(m.contextWindow ? String(m.contextWindow) : '')
+    setInPrice(m.inputPerMTokUsd != null ? String(m.inputPerMTokUsd) : '')
+    setOutPrice(m.outputPerMTokUsd != null ? String(m.outputPerMTokUsd) : '')
+  }
 
   function openAdd() {
     setEditId(null)
-    if (providers.length > 0) setProviderId(providers[0]!.id)
+    if (providers.length > 0) setProviderId(providerFilter || providers[0]!.id)
     setModelId('')
     setDisplayName('')
     setCtx('128000')
     setInPrice('')
     setOutPrice('')
     setError(null)
+    setCatalog(null)
+    setCatalogQuery('')
     setOpen(true)
   }
 
@@ -334,16 +390,67 @@ function ModelsTab({
     reload()
   }
 
+  useEffect(() => {
+    if (!open || !providerId || editId) {
+      setCatalog(null)
+      return
+    }
+    const selected = providers.find((p) => p.id === providerId)
+    if (!selected || selected.protocol === 'mock') {
+      setCatalog(null)
+      return
+    }
+    let cancelled = false
+    setCatalogLoading(true)
+    apiGet<ProviderCatalogDTO>(`/providers/${providerId}/catalog`)
+      .then((c) => {
+        if (!cancelled) setCatalog(c)
+      })
+      .catch(() => {
+        if (!cancelled) setCatalog(null)
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, providerId, editId, providers])
+
+  const catalogHits = (catalog?.models ?? []).filter((m) => {
+    const q = catalogQuery.trim().toLowerCase()
+    if (!q) return true
+    return m.displayName.toLowerCase().includes(q) || m.modelId.toLowerCase().includes(q)
+  })
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 8 }}>
         <h2 style={{ margin: 0 }}>Model Catalog</h2>
-        <button className="primary" onClick={openAdd}>
-          + Enroll Model
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => setPullOpen(true)}
+            disabled={providers.filter((p) => p.protocol !== 'mock').length === 0}
+          >
+            Pull from provider
+          </button>
+          <button className="primary" onClick={openAdd}>
+            Enroll model
+          </button>
+        </div>
       </div>
 
-      <SearchFilter search={search} onSearchChange={setSearch} placeholder="Search models by name or ID…" />
+      <SearchFilter
+        search={search}
+        onSearchChange={setSearch}
+        placeholder="Search models by name or ID…"
+        filters={providers.map((p) => ({
+          label: p.name,
+          value: p.id,
+          active: providerFilter === p.id,
+        }))}
+        onFilterToggle={(id) => setProviderFilter((cur) => (cur === id ? null : id))}
+      />
 
       {filtered.length === 0 ? (
         <div className="empty">
@@ -375,13 +482,74 @@ function ModelsTab({
         }
       >
         <label>Provider</label>
-        <select value={providerId} onChange={(e) => setProviderId(e.target.value)} disabled={!!editId}>
+        <select
+          value={providerId}
+          onChange={(e) => {
+            setProviderId(e.target.value)
+            setModelId('')
+            setDisplayName('')
+            setCtx('128000')
+            setInPrice('')
+            setOutPrice('')
+            setCatalogQuery('')
+          }}
+          disabled={!!editId}
+        >
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
             </option>
           ))}
         </select>
+
+        {!editId && (
+          <>
+            <label>Available models</label>
+            {catalogLoading ? (
+              <p className="muted" style={{ fontSize: '0.82rem' }}>
+                Loading live catalog…
+              </p>
+            ) : catalog && catalog.models.length > 0 ? (
+              <>
+                <input
+                  value={catalogQuery}
+                  onChange={(e) => setCatalogQuery(e.target.value)}
+                  placeholder="Filter provider models…"
+                />
+                <div className="catalog-list compact">
+                  {catalogHits.slice(0, 40).map((m) => (
+                    <button
+                      key={m.modelId}
+                      type="button"
+                      className={`catalog-row ${modelId === m.modelId ? 'selected' : ''}`}
+                      onClick={() => applyCatalogModel(m)}
+                    >
+                      <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                        <div className="catalog-name">{m.displayName}</div>
+                        <div className="catalog-meta">{m.modelId}</div>
+                      </div>
+                      <div className="catalog-price">
+                        {m.inputPerMTokUsd != null
+                          ? `$${m.inputPerMTokUsd}/${m.outputPerMTokUsd ?? '—'}`
+                          : m.contextWindow
+                            ? `${Math.round(m.contextWindow / 1000)}k`
+                            : ''}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="input-hint">
+                  Selecting a model fills id, context, and published $/MTok pricing
+                  {catalog.source ? ` (${catalog.source})` : ''}.
+                </div>
+              </>
+            ) : (
+              <div className="input-hint">
+                {catalog?.reason || 'No live catalog for this provider. Enter a model id manually.'}
+              </div>
+            )}
+          </>
+        )}
 
         <label>Model ID (as the API expects it)</label>
         <input value={modelId} onChange={(e) => setModelId(e.target.value)} placeholder="gpt-4o" />
@@ -405,6 +573,14 @@ function ModelsTab({
 
         {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: '0.85rem' }}>{error}</p>}
       </Modal>
+
+      <CatalogPicker
+        open={pullOpen}
+        onClose={() => setPullOpen(false)}
+        providers={providers}
+        initialProviderId={providerFilter || providers[0]?.id}
+        onEnrolled={reload}
+      />
     </div>
   )
 }

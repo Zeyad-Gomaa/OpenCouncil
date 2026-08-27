@@ -7,6 +7,7 @@ interface ProviderCardProps {
   onDelete: (id: string) => void
   onTest: (id: string) => void
   onEdit?: (provider: ProviderDTO) => void
+  onPullModels?: (provider: ProviderDTO) => void
 }
 
 function getProviderIcon(name: string): string {
@@ -25,7 +26,7 @@ function getProviderIcon(name: string): string {
   return '⬢'
 }
 
-export default function ProviderCard({ provider, onDelete, onTest, onEdit }: ProviderCardProps) {
+export default function ProviderCard({ provider, onDelete, onTest, onEdit, onPullModels }: ProviderCardProps) {
   function handleDelete() {
     if (window.confirm(`Delete "${provider.name}" and all its models? Members using them will be disabled.`)) {
       onDelete(provider.id)
@@ -61,6 +62,11 @@ export default function ProviderCard({ provider, onDelete, onTest, onEdit }: Pro
         </span>
       </div>
       <div className="provider-card-actions">
+        {onPullModels && provider.protocol !== 'mock' && (
+          <button className="sm" onClick={() => onPullModels(provider)}>
+            Pull models
+          </button>
+        )}
         <button className="sm" onClick={() => onTest(provider.id)}>
           Test
         </button>

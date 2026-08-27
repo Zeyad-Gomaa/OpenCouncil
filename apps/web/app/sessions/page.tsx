@@ -37,12 +37,12 @@ export default function SessionsPage() {
     <div>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Sessions</p>
-          <h1>Deliberation History</h1>
-          <p className="subtitle">Every council deliberation, most recent first.</p>
+          <p className="eyebrow">History</p>
+          <h1>Sessions</h1>
+          <p className="subtitle">Every deliberation, most recent first.</p>
         </div>
         <Link className="btn primary" href="/">
-          + New Session
+          New session
         </Link>
       </div>
 
@@ -71,8 +71,8 @@ export default function SessionsPage() {
 
       {filtered.length === 0 ? (
         <div className="empty">
-          <div className="empty-icon">◷</div>
-          {search ? 'No sessions match your search.' : 'No sessions yet. Convene your first council.'}
+          <div className="empty-icon">—</div>
+          {search ? 'No sessions match that search.' : 'No sessions yet. Start from Home.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

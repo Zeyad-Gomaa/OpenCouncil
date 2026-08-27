@@ -62,9 +62,9 @@ export default function ActivityPage() {
     <div>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Observability</p>
-          <h1>Usage & Activity</h1>
-          <p className="subtitle">Every token metered, every action logged — last 30 days.</p>
+          <p className="eyebrow">Usage</p>
+          <h1>Activity</h1>
+          <p className="subtitle">Tokens, spend, and actions — last 30 days.</p>
         </div>
       </div>
 

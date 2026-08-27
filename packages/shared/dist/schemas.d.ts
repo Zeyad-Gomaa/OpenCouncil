@@ -93,6 +93,13 @@ export declare const modelUpdateSchema: z.ZodObject<Omit<{
     inputPerMTokUsd?: number | null | undefined;
     outputPerMTokUsd?: number | null | undefined;
 }>;
+export declare const catalogEnrollSchema: z.ZodObject<{
+    modelIds: z.ZodArray<z.ZodString, "many">;
+}, "strip", z.ZodTypeAny, {
+    modelIds: string[];
+}, {
+    modelIds: string[];
+}>;
 export declare const memberCreateSchema: z.ZodObject<{
     name: z.ZodString;
     modelId: z.ZodString;

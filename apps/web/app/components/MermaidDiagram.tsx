@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import { cleanupMermaidDom, isMermaidErrorSvg, sanitizeMermaid } from '../lib/sanitizeMermaid'
 
 interface MermaidDiagramProps {
   chart: string
@@ -8,6 +9,7 @@ interface MermaidDiagramProps {
 
 interface MermaidAPI {
   initialize(options: Record<string, unknown>): void
+  parse(text: string): Promise<unknown>
   render(id: string, text: string): Promise<{ svg: string }>
 }
 
@@ -17,29 +19,35 @@ declare global {
   }
 }
 
+const MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.esm.min.mjs'
+
 async function getMermaid(): Promise<MermaidAPI | null> {
   if (typeof window === 'undefined') return null
   if (!window.__mermaidPromise) {
     window.__mermaidPromise = (async (): Promise<MermaidAPI | null> => {
       try {
-        const loadModule = new Function('url', 'return import(url)')
-        const mod = (await loadModule('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs')) as {
-          default?: MermaidAPI
-        } & MermaidAPI
-        const mermaid = mod.default || mod
+        const loadModule = new Function('url', 'return import(url)') as (url: string) => Promise<
+          {
+            default?: MermaidAPI
+          } & MermaidAPI
+        >
+        const mod = await loadModule(MERMAID_CDN)
+        const mermaid = (mod.default || mod) as MermaidAPI
         mermaid.initialize({
           startOnLoad: false,
           theme: 'dark',
-          securityLevel: 'loose',
+          securityLevel: 'strict',
+          suppressErrorRendering: true,
           themeVariables: {
             darkMode: true,
-            background: '#121215',
-            primaryColor: '#6366f1',
-            primaryTextColor: '#f4f4f5',
-            primaryBorderColor: '#818cf8',
-            lineColor: '#a1a1aa',
-            secondaryColor: '#27272a',
-            tertiaryColor: '#18181b',
+            background: '#0a0a0a',
+            primaryColor: '#262626',
+            primaryTextColor: '#ececec',
+            primaryBorderColor: '#525252',
+            lineColor: '#a3a3a3',
+            secondaryColor: '#171717',
+            tertiaryColor: '#111111',
+            fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
           },
         })
         return mermaid
@@ -53,7 +61,6 @@ async function getMermaid(): Promise<MermaidAPI | null> {
 }
 
 export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
@@ -63,28 +70,45 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
   useEffect(() => {
     let cancelled = false
     async function render() {
-      try {
-        const mermaid = await getMermaid()
-        if (cancelled) return
-        if (!mermaid) {
-          setError('Mermaid visualizer unavailable')
-          return
-        }
-        const cleanChart = chart.trim()
-        const { svg: renderedSvg } = await mermaid.render(`mermaid_${uniqueId}_${Date.now()}`, cleanChart)
-        if (!cancelled) {
+      setError(null)
+      setSvg(null)
+      const mermaid = await getMermaid()
+      if (cancelled) return
+      if (!mermaid) {
+        setError('Mermaid visualizer unavailable')
+        return
+      }
+
+      const candidates = Array.from(new Set([chart.trim(), sanitizeMermaid(chart)].filter(Boolean)))
+      let lastErr = 'Could not parse diagram'
+      for (const candidate of candidates) {
+        const renderId = `mmd_${uniqueId}_${Math.random().toString(36).slice(2, 8)}`
+        try {
+          if (typeof mermaid.parse === 'function') await mermaid.parse(candidate)
+          const { svg: renderedSvg } = await mermaid.render(renderId, candidate)
+          cleanupMermaidDom()
+          if (cancelled) return
+          if (!renderedSvg || isMermaidErrorSvg(renderedSvg)) {
+            lastErr = 'Invalid Mermaid syntax'
+            continue
+          }
           setSvg(renderedSvg)
           setError(null)
+          return
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : String(err)
+          cleanupMermaidDom()
         }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err))
-        }
+      }
+      if (!cancelled) {
+        setSvg(null)
+        setError(friendlyMermaidError(lastErr))
       }
     }
     void render()
     return () => {
       cancelled = true
+      cleanupMermaidDom()
     }
   }, [chart, uniqueId])
 
@@ -95,108 +119,44 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
   }
 
   return (
-    <div
-      style={{
-        margin: '14px 0',
-        borderRadius: 'var(--radius)',
-        border: '1px solid var(--border-accent)',
-        background: 'var(--bg-card)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '6px 12px',
-          background: 'rgba(255,255,255,0.03)',
-          borderBottom: '1px solid var(--border)',
-          fontSize: '0.74rem',
-          color: 'var(--text-secondary)',
-        }}
-      >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-          <span>📊</span>
-          <span>Mermaid Diagram</span>
-        </span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => setShowRaw(!showRaw)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-tertiary)',
-              cursor: 'pointer',
-              fontSize: '0.72rem',
-              padding: '2px 6px',
-            }}
-          >
-            {showRaw ? 'Show Diagram' : 'View Code'}
+    <div className="diagram-card">
+      <div className="diagram-card-bar">
+        <span className="diagram-card-label">Diagram</span>
+        <div className="diagram-card-actions">
+          <button type="button" className="ghost sm" onClick={() => setShowRaw(!showRaw)}>
+            {showRaw ? 'Show diagram' : 'View source'}
           </button>
-          <button
-            onClick={handleCopy}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-tertiary)',
-              cursor: 'pointer',
-              fontSize: '0.72rem',
-              padding: '2px 6px',
-            }}
-          >
-            {copied ? '✓ Copied' : 'Copy'}
+          <button type="button" className="ghost sm" onClick={handleCopy}>
+            {copied ? 'Copied' : 'Copy'}
           </button>
         </div>
       </div>
 
       {showRaw ? (
-        <pre
-          style={{
-            margin: 0,
-            padding: 14,
-            fontSize: '0.8rem',
-            overflowX: 'auto',
-            background: '#09090b',
-            color: '#a1a1aa',
-          }}
-        >
+        <pre className="diagram-source">
           <code>{chart}</code>
         </pre>
       ) : error ? (
-        <div style={{ padding: 14 }}>
-          <p style={{ color: 'var(--danger)', fontSize: '0.78rem', margin: '0 0 8px' }}>
-            Diagram rendering note: {error}
-          </p>
-          <pre
-            style={{
-              margin: 0,
-              padding: 10,
-              fontSize: '0.78rem',
-              overflowX: 'auto',
-              background: '#09090b',
-              borderRadius: 6,
-            }}
-          >
+        <div className="diagram-fallback">
+          <p className="diagram-fallback-note">{error}</p>
+          <pre className="diagram-source">
             <code>{chart}</code>
           </pre>
         </div>
       ) : svg ? (
-        <div
-          ref={containerRef}
-          style={{
-            padding: '16px 12px',
-            display: 'flex',
-            justifyContent: 'center',
-            overflowX: 'auto',
-          }}
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
+        <div className="diagram-svg" dangerouslySetInnerHTML={{ __html: svg }} />
       ) : (
-        <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>
-          Rendering diagram…
-        </div>
+        <div className="diagram-loading">Rendering diagram…</div>
       )}
     </div>
   )
+}
+
+function friendlyMermaidError(raw: string): string {
+  const lower = raw.toLowerCase()
+  if (lower.includes('syntax error') || lower.includes('parse') || lower.includes('lexical')) {
+    return 'This diagram has invalid Mermaid syntax, so the source is shown instead.'
+  }
+  if (lower.includes('unavailable')) return raw
+  return 'This diagram could not be rendered. Source is shown below.'
 }

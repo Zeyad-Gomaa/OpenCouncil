@@ -24,6 +24,22 @@ export interface ModelDTO {
   enabled: boolean
 }
 
+export interface CatalogModel {
+  modelId: string
+  displayName: string
+  contextWindow: number | null
+  inputPerMTokUsd: number | null
+  outputPerMTokUsd: number | null
+  enrolled?: boolean
+}
+
+export interface ProviderCatalogDTO {
+  supported: boolean
+  source: string
+  reason?: string
+  models: CatalogModel[]
+}
+
 export type MessageKind = 'user' | 'discussion' | 'synthesis' | 'system'
 export type SessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 

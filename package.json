@@ -27,6 +27,7 @@
     "bin/",
     "apps/server/dist/",
     "apps/server/package.json",
+    "scripts/",
     "docs/",
     "README.md",
     "LICENSE",
@@ -51,7 +52,8 @@
     "serve:api": "node apps/server/dist/index.js",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepare": "node scripts/prepare.js"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",

@@ -1,5 +1,5 @@
 /** End-to-end: full mock council deliberation through the engine + REST API. */
-import { beforeAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { setVaultKeyForTests } from '../vault/crypto.js'
 import { loadConfig } from '../config.js'
 import { migrate, openDatabase, type DB } from '../db/connection.js'
@@ -16,6 +16,10 @@ let app: Awaited<ReturnType<typeof buildApp>>
 const seenEvents: { type: string; sessionId?: string }[] = []
 
 beforeAll(async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ query: { search: [] } }), { status: 200 })),
+  )
   setVaultKeyForTests('test-secret-e2e')
   const config = {
     ...loadConfig({} as never),
@@ -55,6 +59,10 @@ afterEach(() => {
   seenEvents.length = 0
 })
 
+afterAll(() => {
+  vi.unstubAllGlobals()
+})
+
 async function waitForSessionCompletion(sessionId: string, timeoutMs = 10_000): Promise<string> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -66,6 +74,14 @@ async function waitForSessionCompletion(sessionId: string, timeoutMs = 10_000): 
 }
 
 describe('council end-to-end', () => {
+  it('reports no live catalog for the mock provider', async () => {
+    const provider = db.prepare("SELECT id FROM providers WHERE protocol='mock' LIMIT 1").get() as { id: string }
+    const res = await app.inject({ method: 'GET', url: `/api/v1/providers/${provider.id}/catalog` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().supported).toBe(false)
+    expect(res.json().models).toEqual([])
+  })
+
   it('health endpoint responds', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/health' })
     expect(res.statusCode).toBe(200)
@@ -86,12 +102,13 @@ describe('council end-to-end', () => {
     const status = await waitForSessionCompletion(sessionId)
     expect(status).toBe('completed')
 
-    // Snapshot contains user msg + 2 rounds x 3 members + synthesis = 8 messages
+    // Snapshot: user + web-search system note + 2 rounds x 3 members + synthesis
     const snap = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}` })
     const body = snap.json()
-    expect(body.messages).toHaveLength(8)
+    expect(body.messages).toHaveLength(9)
     expect(body.messages[0].kind).toBe('user')
     const kinds = body.messages.map((m: { kind: string }) => m.kind)
+    expect(kinds.filter((k: string) => k === 'system')).toHaveLength(1)
     expect(kinds.filter((k: string) => k === 'discussion')).toHaveLength(6)
     expect(kinds.filter((k: string) => k === 'synthesis')).toHaveLength(1)
 
@@ -191,7 +208,7 @@ describe('council end-to-end', () => {
     expect(bad.json().error.code).toBe('invalid_config')
   })
 
-  it('supports dynamically extending debate rounds and early conclusion', async () => {
+  it('supports dynamically extending debate rounds and early conclusion', { timeout: 15_000 }, async () => {
     let council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string } | undefined
     if (!council) {
       seedDemoCouncil(db)

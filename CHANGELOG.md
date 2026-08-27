@@ -4,6 +4,29 @@ All notable changes to OpenCouncil are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Settings can pull live model availability and published $/MTok pricing from
+  a provider (OpenRouter natively; OpenAI/Anthropic/Google/Groq/xAI/etc. via
+  their model list APIs plus an OpenRouter price overlay).
+
+### Changed
+
+- Chamber UI restyled to a Grok-like conversation layout: black canvas, white
+  primary actions, slim sidebar with recent sessions, centered composer.
+- Home empty state and live chamber now feel like a chat, not an admin dashboard.
+
+### Fixed
+
+- Mermaid diagrams no longer dump "Syntax error in text / mermaid version …"
+  into the page. Invalid LLM diagrams fall back to source; leftover error SVGs
+  are suppressed.
+- Web research actually has a working zero-config path: DuckDuckGo HTML/Lite,
+  then Wikipedia. Round-robin members now receive that grounding.
+- `prepare` is wired in `package.json`, so `npm install` in a clone is enough
+  to produce a runnable `npx opencouncil` when artifacts are missing.
+- Provider "Test" no longer uses `window.alert`.
+
 ## [0.1.0] — 2026-08-27
 
 First public release: a self-hosted, bring-your-own-key platform where several

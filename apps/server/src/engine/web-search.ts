@@ -1,4 +1,4 @@
-/** Web search provider: multi-backend search with zero-config DuckDuckGo fallback. */
+/** Web search: paid backends first, then DuckDuckGo, then Wikipedia. */
 
 export interface SearchResult {
   title: string
@@ -14,47 +14,47 @@ const USER_AGENT =
  * 1. Tavily (if TAVILY_API_KEY is set)
  * 2. Brave (if BRAVE_API_KEY is set)
  * 3. SearXNG (if SEARXNG_URL is set)
- * 4. DuckDuckGo HTML / Lite (built-in, zero-config, free)
+ * 4. DuckDuckGo HTML / Lite (built-in)
+ * 5. Wikipedia OpenSearch (built-in, reliable fallback)
  */
 export async function searchWeb(query: string, maxResults = 5, timeoutMs = 8000): Promise<SearchResult[]> {
   const cleanQuery = query.trim().slice(0, 400)
   if (!cleanQuery) return []
+  const started = Date.now()
+  const remain = (): number => Math.max(800, timeoutMs - (Date.now() - started))
 
-  // 1. Tavily API
+  const backends: Array<() => Promise<SearchResult[]>> = []
   if (process.env.TAVILY_API_KEY) {
-    try {
-      const res = await searchTavily(cleanQuery, process.env.TAVILY_API_KEY, maxResults, timeoutMs)
-      if (res.length > 0) return res
-    } catch {
-      // fallback to next
-    }
+    backends.push(() => searchTavily(cleanQuery, process.env.TAVILY_API_KEY!, maxResults, remain()))
   }
-
-  // 2. Brave Search API
   if (process.env.BRAVE_API_KEY) {
-    try {
-      const res = await searchBrave(cleanQuery, process.env.BRAVE_API_KEY, maxResults, timeoutMs)
-      if (res.length > 0) return res
-    } catch {
-      // fallback to next
-    }
+    backends.push(() => searchBrave(cleanQuery, process.env.BRAVE_API_KEY!, maxResults, remain()))
   }
-
-  // 3. SearXNG
   if (process.env.SEARXNG_URL) {
+    backends.push(() => searchSearXNG(cleanQuery, process.env.SEARXNG_URL!, maxResults, remain()))
+  }
+  backends.push(() => searchDuckDuckGo(cleanQuery, maxResults, remain()))
+  backends.push(() => searchWikipedia(cleanQuery, maxResults, remain()))
+
+  for (const run of backends) {
+    if (remain() < 400) break
     try {
-      const res = await searchSearXNG(cleanQuery, process.env.SEARXNG_URL, maxResults, timeoutMs)
-      if (res.length > 0) return res
+      const res = (await run()).filter((r) => r.title && r.url.startsWith('http'))
+      if (res.length > 0) return res.slice(0, maxResults)
     } catch {
-      // fallback to next
+      /* try next backend */
     }
   }
+  return []
+}
 
-  // 4. Built-in zero-config DuckDuckGo
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await searchDuckDuckGo(cleanQuery, maxResults, timeoutMs)
-  } catch {
-    return []
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -64,25 +64,22 @@ async function searchTavily(
   maxResults: number,
   timeoutMs: number,
 ): Promise<SearchResult[]> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch('https://api.tavily.com/search', {
+  const res = await fetchWithTimeout(
+    'https://api.tavily.com/search',
+    {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults }),
-      signal: controller.signal,
-    })
-    if (!res.ok) return []
-    const data = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> }
-    return (data.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || 'Web Result',
-      url: r.url || '',
-      snippet: (r.content || '').slice(0, 300),
-    }))
-  } finally {
-    clearTimeout(timer)
-  }
+    },
+    timeoutMs,
+  )
+  if (!res.ok) return []
+  const data = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> }
+  return (data.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || 'Web Result',
+    url: r.url || '',
+    snippet: (r.content || '').slice(0, 300),
+  }))
 }
 
 async function searchBrave(
@@ -91,28 +88,20 @@ async function searchBrave(
   maxResults: number,
   timeoutMs: number,
 ): Promise<SearchResult[]> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
-      {
-        headers: { 'X-Subscription-Token': apiKey, Accept: 'application/json' },
-        signal: controller.signal,
-      },
-    )
-    if (!res.ok) return []
-    const data = (await res.json()) as {
-      web?: { results?: Array<{ title?: string; url?: string; description?: string }> }
-    }
-    return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || 'Web Result',
-      url: r.url || '',
-      snippet: (r.description || '').slice(0, 300),
-    }))
-  } finally {
-    clearTimeout(timer)
+  const res = await fetchWithTimeout(
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
+    { headers: { 'X-Subscription-Token': apiKey, Accept: 'application/json' } },
+    timeoutMs,
+  )
+  if (!res.ok) return []
+  const data = (await res.json()) as {
+    web?: { results?: Array<{ title?: string; url?: string; description?: string }> }
   }
+  return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || 'Web Result',
+    url: r.url || '',
+    snippet: (r.description || '').slice(0, 300),
+  }))
 }
 
 async function searchSearXNG(
@@ -121,129 +110,177 @@ async function searchSearXNG(
   maxResults: number,
   timeoutMs: number,
 ): Promise<SearchResult[]> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const url = new URL('/search', baseUrl)
-    url.searchParams.set('q', query)
-    url.searchParams.set('format', 'json')
-    const res = await fetch(url.toString(), { signal: controller.signal })
-    if (!res.ok) return []
-    const data = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> }
-    return (data.results ?? []).slice(0, maxResults).map((r) => ({
-      title: r.title || 'Web Result',
-      url: r.url || '',
-      snippet: (r.content || '').slice(0, 300),
-    }))
-  } finally {
-    clearTimeout(timer)
-  }
+  const url = new URL('/search', baseUrl)
+  url.searchParams.set('q', query)
+  url.searchParams.set('format', 'json')
+  const res = await fetchWithTimeout(url.toString(), {}, timeoutMs)
+  if (!res.ok) return []
+  const data = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> }
+  return (data.results ?? []).slice(0, maxResults).map((r) => ({
+    title: r.title || 'Web Result',
+    url: r.url || '',
+    snippet: (r.content || '').slice(0, 300),
+  }))
 }
 
 async function searchDuckDuckGo(query: string, maxResults: number, timeoutMs: number): Promise<SearchResult[]> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    // Use DuckDuckGo HTML endpoint
-    const res = await fetch('https://html.duckduckgo.com/html/', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': USER_AGENT,
-      },
-      body: new URLSearchParams({ q: query, b: '' }).toString(),
-      signal: controller.signal,
-    })
+  const htmlAttempts: Array<() => Promise<string>> = [
+    async () => {
+      const res = await fetchWithTimeout(
+        'https://html.duckduckgo.com/html/',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'user-agent': USER_AGENT,
+          },
+          body: new URLSearchParams({ q: query, b: '' }).toString(),
+        },
+        timeoutMs,
+      )
+      return res.ok ? await res.text() : ''
+    },
+    async () => {
+      const res = await fetchWithTimeout(
+        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+        { headers: { 'user-agent': USER_AGENT } },
+        timeoutMs,
+      )
+      return res.ok ? await res.text() : ''
+    },
+    async () => {
+      const res = await fetchWithTimeout(
+        `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+        { headers: { 'user-agent': USER_AGENT } },
+        timeoutMs,
+      )
+      return res.ok ? await res.text() : ''
+    },
+  ]
 
-    if (!res.ok) return []
-    const html = await res.text()
-    const results: SearchResult[] = []
-
-    // Match each result block in DuckDuckGo HTML
-    // Classes: result__snippet, result__url, result__title
-    const blockRegex = /<div class="result__body">([\s\S]*?)<\/div>\s*<\/div>/gi
-    let match: RegExpExecArray | null
-
-    while ((match = blockRegex.exec(html)) !== null && results.length < maxResults) {
-      const block = match[1] ?? ''
-
-      // Title & URL
-      const titleMatch = /<a[^>]*class="result__url"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
-      const linkMatch = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
-
-      // Snippet
-      const snippetMatch = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
-
-      const rawUrl = linkMatch?.[1] || titleMatch?.[1] || ''
-      const rawTitle = linkMatch?.[2] || titleMatch?.[2] || ''
-      const rawSnippet = snippetMatch?.[1] || ''
-
-      // Decode DDG redirect URL if applicable (e.g. //duckduckgo.com/l/?uddg=https%3A%2F%2F...)
-      let cleanUrl = rawUrl
-      if (rawUrl.includes('uddg=')) {
-        try {
-          const matchUddg = /uddg=([^&]+)/.exec(rawUrl)
-          if (matchUddg && matchUddg[1]) {
-            cleanUrl = decodeURIComponent(matchUddg[1])
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      const cleanTitle = stripHtml(rawTitle).trim()
-      const cleanSnippet = stripHtml(rawSnippet).trim()
-
-      if (cleanTitle && cleanSnippet && cleanUrl.startsWith('http')) {
-        results.push({
-          title: cleanTitle,
-          url: cleanUrl,
-          snippet: cleanSnippet,
-        })
-      }
+  for (const attempt of htmlAttempts) {
+    try {
+      const html = await attempt()
+      const parsed = parseDuckDuckGoHtml(html, maxResults)
+      if (parsed.length > 0) return parsed
+    } catch {
+      /* next attempt */
     }
-
-    // If HTML parser found results, return them
-    if (results.length > 0) return results
-
-    // Fallback: DuckDuckGo Instant Answer API
-    const apiRes = await fetch(
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-      {
-        headers: { 'user-agent': USER_AGENT },
-        signal: controller.signal,
-      },
-    )
-    if (apiRes.ok) {
-      const data = (await apiRes.json()) as {
-        AbstractText?: string
-        AbstractURL?: string
-        Heading?: string
-        RelatedTopics?: Array<{ Text?: string; FirstURL?: string }>
-      }
-      if (data.AbstractText && data.AbstractURL) {
-        results.push({
-          title: data.Heading || query,
-          url: data.AbstractURL,
-          snippet: data.AbstractText.slice(0, 300),
-        })
-      }
-      for (const topic of data.RelatedTopics || []) {
-        if (results.length >= maxResults) break
-        if (topic.Text && topic.FirstURL) {
-          results.push({
-            title: topic.Text.split(' - ')[0] || query,
-            url: topic.FirstURL,
-            snippet: topic.Text.slice(0, 300),
-          })
-        }
-      }
-    }
-
-    return results
-  } finally {
-    clearTimeout(timer)
   }
+
+  const apiRes = await fetchWithTimeout(
+    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+    { headers: { 'user-agent': USER_AGENT } },
+    timeoutMs,
+  )
+  if (!apiRes.ok) return []
+  const data = (await apiRes.json().catch(() => null)) as {
+    AbstractText?: string
+    AbstractURL?: string
+    Heading?: string
+    RelatedTopics?: Array<{ Text?: string; FirstURL?: string; Topics?: Array<{ Text?: string; FirstURL?: string }> }>
+  } | null
+  if (!data) return []
+  const results: SearchResult[] = []
+  if (data.AbstractText && data.AbstractURL) {
+    results.push({
+      title: data.Heading || query,
+      url: data.AbstractURL,
+      snippet: data.AbstractText.slice(0, 300),
+    })
+  }
+  const topics = (data.RelatedTopics || []).flatMap((t) => (t.Topics ? t.Topics : [t]))
+  for (const topic of topics) {
+    if (results.length >= maxResults) break
+    if (topic.Text && topic.FirstURL) {
+      results.push({
+        title: topic.Text.split(' - ')[0] || query,
+        url: topic.FirstURL,
+        snippet: topic.Text.slice(0, 300),
+      })
+    }
+  }
+  return results
+}
+
+export function parseDuckDuckGoHtml(html: string, maxResults: number): SearchResult[] {
+  if (!html) return []
+  const results: SearchResult[] = []
+  const seen = new Set<string>()
+
+  const push = (rawUrl: string, rawTitle: string, rawSnippet: string) => {
+    const cleanUrl = decodeDdgUrl(rawUrl)
+    const cleanTitle = stripHtml(rawTitle).trim()
+    const cleanSnippet = stripHtml(rawSnippet).trim()
+    if (!cleanTitle || !cleanUrl.startsWith('http') || seen.has(cleanUrl)) return
+    seen.add(cleanUrl)
+    results.push({ title: cleanTitle, url: cleanUrl, snippet: cleanSnippet || cleanTitle })
+  }
+
+  const blockRegex = /<div class="result__body">([\s\S]*?)<\/div>\s*<\/div>/gi
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(html)) !== null && results.length < maxResults) {
+    const block = match[1] ?? ''
+    const titleMatch = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
+    const snippetMatch = /<(?:a|td)[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|td)>/i.exec(block)
+    if (titleMatch) push(titleMatch[1] || '', titleMatch[2] || '', snippetMatch?.[1] || '')
+  }
+
+  if (results.length === 0) {
+    const liteLink = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
+    const snippets = [...html.matchAll(/<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1] || '')
+    let i = 0
+    while ((match = liteLink.exec(html)) !== null && results.length < maxResults) {
+      push(match[1] || '', match[2] || '', snippets[i] || '')
+      i++
+    }
+  }
+
+  if (results.length === 0) {
+    const generic = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
+    while ((match = generic.exec(html)) !== null && results.length < maxResults) {
+      push(match[1] || '', match[2] || '', '')
+    }
+  }
+
+  return results.slice(0, maxResults)
+}
+
+export async function searchWikipedia(query: string, maxResults = 5, timeoutMs = 5000): Promise<SearchResult[]> {
+  const url =
+    `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}` +
+    `&srlimit=${maxResults}&utf8=&format=json&origin=*`
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { 'user-agent': USER_AGENT, accept: 'application/json' } },
+    timeoutMs,
+  )
+  if (!res.ok) return []
+  const data = (await res.json()) as {
+    query?: { search?: Array<{ title?: string; snippet?: string; pageid?: number }> }
+  }
+  return (data.query?.search ?? []).slice(0, maxResults).map((r) => {
+    const title = r.title || 'Wikipedia'
+    return {
+      title,
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
+      snippet: stripHtml(r.snippet || '').slice(0, 300),
+    }
+  })
+}
+
+function decodeDdgUrl(rawUrl: string): string {
+  let cleanUrl = rawUrl
+  if (rawUrl.includes('uddg=')) {
+    try {
+      const matchUddg = /uddg=([^&]+)/.exec(rawUrl)
+      if (matchUddg?.[1]) cleanUrl = decodeURIComponent(matchUddg[1])
+    } catch {
+      /* keep original */
+    }
+  }
+  if (cleanUrl.startsWith('//')) cleanUrl = `https:${cleanUrl}`
+  return cleanUrl
 }
 
 function stripHtml(html: string): string {

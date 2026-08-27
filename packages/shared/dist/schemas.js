@@ -27,6 +27,9 @@ export const modelCreateSchema = z.object({
     enabled: z.boolean().optional(),
 });
 export const modelUpdateSchema = modelCreateSchema.partial().omit({ providerId: true });
+export const catalogEnrollSchema = z.object({
+    modelIds: z.array(z.string().min(1).max(200)).min(1).max(500),
+});
 export const memberCreateSchema = z.object({
     name: z.string().min(1).max(60),
     modelId: z.string().uuid(),

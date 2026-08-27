@@ -60,10 +60,30 @@ Cascades models. Members referencing those models are disabled, not deleted.
 Tests the configured default model and returns only `{ ok, latencyMs,
 errorCode, message }`; secrets are never returned.
 
+### GET /providers/:id/catalog
+
+Live model availability for that provider, with pricing when the vendor (or
+OpenRouter as a public overlay) publishes it.
+
+`200 { supported, source, reason?, models: [{ modelId, displayName, contextWindow, inputPerMTokUsd, outputPerMTokUsd, enrolled }] }`
+
+OpenAI-compatible providers are queried at `{baseUrl}/models`. Anthropic uses
+`/v1/models`, Google uses `/v1beta/models`. OpenRouter's catalog includes
+per-token prices, converted to USD per million tokens. For other hosts the
+OpenRouter public catalog is used as a pricing overlay when ids match.
+
+### POST /providers/:id/catalog/enroll
+
+```json
+{ "modelIds": ["openai/gpt-4o", "anthropic/claude-sonnet-4"] }
+```
+
+Creates missing models and refreshes pricing/context on ones already enrolled.
+`200 { created, updated, models }`
+
 ### POST /providers/:id/discover-models
 
-Returns known configured models and an explicit `supported` flag. Unsupported
-adapters do not pretend discovery succeeded.
+Same payload as `GET /providers/:id/catalog`. Kept as an alias.
 
 ## Models
 
