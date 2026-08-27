@@ -1,1 +1,0 @@
-{"version":3,"file":"moderator.js","sourceRoot":"","sources":["../../src/engine/moderator.ts"],"names":[],"mappings":"AAGA,MAAM,CAAC,MAAM,uBAAuB,GAAG;;;;;;8GAMuE,CAAA;AAE9G,MAAM,UAAU,sBAAsB,CAAC,KAAa,EAAE,UAAkB;IACtE,OAAO;QACL,EAAE,IAAI,EAAE,QAAQ,EAAE,OAAO,EAAE,uBAAuB,EAAE;QACpD;YACE,IAAI,EAAE,MAAM;YACZ,OAAO,EAAE,iCAAiC,KAAK,yCAAyC,UAAU,0CAA0C;SAC7I;KACF,CAAA;AACH,CAAC"}
