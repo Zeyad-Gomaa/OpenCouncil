@@ -1509,3 +1509,67 @@ tbody tr:hover {
     white-space: nowrap;
   }
 }
+
+/* Markdown & Diagram styles */
+.md-rendered {
+  word-break: break-word;
+}
+.md-rendered p {
+  margin: 0.5rem 0;
+}
+.md-rendered strong {
+  font-weight: 600;
+  color: var(--text, #f4f4f5);
+}
+.md-rendered em {
+  font-style: italic;
+  color: var(--text-secondary, #a1a1aa);
+}
+.md-rendered a {
+  color: var(--accent-bright, #818cf8);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color var(--transition-fast);
+}
+.md-rendered a:hover {
+  color: #a5b4fc;
+}
+.md-rendered ul,
+.md-rendered ol {
+  margin: 0.5rem 0;
+  padding-left: 1.4rem;
+}
+.md-rendered li {
+  margin: 0.25rem 0;
+}
+.md-rendered blockquote {
+  border-left: 3px solid var(--accent);
+  background: rgba(99, 102, 241, 0.06);
+  padding: 0.5rem 0.9rem;
+  margin: 0.6rem 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.md-rendered table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.md-rendered th {
+  background: rgba(255, 255, 255, 0.04);
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.md-rendered td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.md-rendered img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}

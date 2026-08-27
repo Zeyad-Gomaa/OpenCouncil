@@ -91,4 +91,14 @@ describe('restart recovery', () => {
       db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status='failed' AND error LIKE 'process restarted%'").get(),
     ).toEqual({ n: 2 })
   })
+
+  it('allows councils to be created and updated with up to 100 rounds', () => {
+    expect(() => {
+      db.prepare(
+        "INSERT INTO councils (id, name, description, strategy, rounds) VALUES ('c-100', 'Big Debate', '', 'debate', 100)",
+      ).run()
+    }).not.toThrow()
+    const row = db.prepare('SELECT rounds FROM councils WHERE id = ?').get('c-100') as { rounds: number }
+    expect(row.rounds).toBe(100)
+  })
 })

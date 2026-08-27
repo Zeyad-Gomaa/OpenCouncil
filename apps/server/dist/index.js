@@ -1495,7 +1495,7 @@ CREATE TABLE councils (
   name TEXT NOT NULL,
   description TEXT,
   strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate')),
-  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 10),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
   moderator_member_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -1613,6 +1613,33 @@ CREATE INDEX idx_session_events_sequence ON session_events(session_id, sequence)
     sql: `
 ALTER TABLE usage_events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE usage_events ADD COLUMN error_code TEXT;
+`
+  },
+  {
+    version: 4,
+    name: "expand-council-rounds",
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v4;
+ALTER TABLE councils RENAME TO councils_v4;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v4;
+DROP TABLE councils_v4;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v4;
+DROP TABLE council_members_v4;
 `
   }
 ];
@@ -1838,11 +1865,12 @@ init_http();
 // apps/server/src/engine/moderator.ts
 var SYNTHESIS_SYSTEM_PROMPT = `You are the moderator of an AI council. You have watched a panel of AI members deliberate a question over one or more rounds. Your task:
 
-1. Identify the points of AGREEMENT across members.
-2. Note material disagreements and state how they were (or weren't) resolved.
-3. Deliver ONE clear, actionable final answer representing the council's consensus.
+1. Identify the core points of AGREEMENT across members.
+2. Note material disagreements and state how they were resolved.
+3. Deliver ONE clear, actionable, authoritative final synthesis representing the council's consensus.
+4. Use rich Markdown structuring (headings, key takeaways, summary tables, citation links). If helpful to explain the consensus architecture or workflow, include a Mermaid diagram (\`\`\`mermaid ... \`\`\`).
 
-Be concise but complete. Structure with short headings or numbered points. Do not mention that you are an AI.`;
+Be concise, rigorous, and direct. Do not mention that you are an AI.`;
 function buildSynthesisMessages(topic, transcript) {
   return [
     { role: "system", content: SYNTHESIS_SYSTEM_PROMPT },
@@ -2317,8 +2345,9 @@ ${member.systemPrompt}
 2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.
 3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").
 4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.
-5. WEB EVIDENCE: If live web research is provided, utilize and cite the factual sources to ground your arguments.
-6. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
+5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.
+6. DIAGRAMS & VISUALS: You can and SHOULD draw Mermaid diagrams (\`\`\`mermaid ... \`\`\`) to illustrate architectures, flows, state transitions, comparison matrices, and trade-offs. You can also embed images (\`![caption](url)\`).
+7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
       );
       messages.push({ role: "system", content: systemPromptParts.join("\n") });
       if (includeTranscript && transcript.length > 0) {
@@ -2655,7 +2684,7 @@ import Fastify from "fastify";
 import { randomUUID as randomUUID5 } from "node:crypto";
 
 // apps/server/src/version.ts
-var VERSION = "0.3.0";
+var VERSION = "0.4.0";
 
 // apps/server/src/app.ts
 var INSTANCE_ID = randomUUID5();

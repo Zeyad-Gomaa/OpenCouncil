@@ -1,6 +1,6 @@
 {
   "name": "@opencouncil/server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "OpenCouncil server + CLI. Built and published as part of the root `opencouncil` package; this manifest ships alongside dist/ so Node treats the bundle as ESM.",
   "type": "module",

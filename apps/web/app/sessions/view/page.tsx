@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { apiGet, apiSend } from '../../lib/api'
+import MarkdownRenderer from '../../components/MarkdownRenderer'
 import type { CouncilEvent, MemberLiveStatus, MessageDTO, SessionDTO } from '@opencouncil/shared'
 
 interface Snapshot {
@@ -348,7 +349,9 @@ function ChamberContent() {
       {synthesis && (
         <div className="synthesis-card">
           <h3>⚖ Council Synthesis</h3>
-          <div className="message-content">{synthesis.content}</div>
+          <div className="message-content" style={{ marginTop: 8 }}>
+            <MarkdownRenderer content={synthesis.content} />
+          </div>
           <MessageMeta m={synthesis} />
         </div>
       )}
@@ -387,8 +390,8 @@ function ChamberContent() {
                       </span>
                       <MessageMeta m={m} />
                     </div>
-                    <div className="message-content" style={{ whiteSpace: 'pre-wrap' }}>
-                      {m.content}
+                    <div className="message-content">
+                      <MarkdownRenderer content={m.content} />
                     </div>
                   </div>
                 </div>

@@ -77,7 +77,7 @@ CREATE TABLE councils (
   name TEXT NOT NULL,
   description TEXT,
   strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate')),
-  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 10),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
   moderator_member_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -195,6 +195,33 @@ CREATE INDEX idx_session_events_sequence ON session_events(session_id, sequence)
     sql: `
 ALTER TABLE usage_events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE usage_events ADD COLUMN error_code TEXT;
+`,
+  },
+  {
+    version: 4,
+    name: 'expand-council-rounds',
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v4;
+ALTER TABLE councils RENAME TO councils_v4;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v4;
+DROP TABLE councils_v4;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v4;
+DROP TABLE council_members_v4;
 `,
   },
 ]

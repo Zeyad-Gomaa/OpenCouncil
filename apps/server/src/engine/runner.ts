@@ -386,8 +386,9 @@ export class SessionRunner {
           `2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.\n` +
           `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
           `4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.\n` +
-          `5. WEB EVIDENCE: If live web research is provided, utilize and cite the factual sources to ground your arguments.\n` +
-          `6. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
+          `5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.\n` +
+          `6. DIAGRAMS & VISUALS: You can and SHOULD draw Mermaid diagrams (\`\`\`mermaid ... \`\`\`) to illustrate architectures, flows, state transitions, comparison matrices, and trade-offs. You can also embed images (\`![caption](url)\`).\n` +
+          `7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
       )
 
       messages.push({ role: 'system', content: systemPromptParts.join('\n') })
