@@ -47,6 +47,7 @@ function ChamberContent() {
   const [memberColors, setMemberColors] = useState<Record<string, string>>({})
   const [liveUsage, setLiveUsage] = useState<LiveUsage>({ calls: 0, tokens: 0, costUsd: 0 })
   const [actionNotice, setActionNotice] = useState<string | null>(null)
+  const [interventionText, setInterventionText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -209,6 +210,21 @@ function ChamberContent() {
     }
   }
 
+  async function handleIntervene() {
+    if (!interventionText.trim() || actionBusy) return
+    const text = interventionText.trim()
+    setInterventionText('')
+    try {
+      setActionBusy(true)
+      await apiSend(`/sessions/${sessionId}/intervene`, 'POST', { content: text })
+      setActionNotice('Directive delivered — council members will address it!')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
   async function handleRerun() {
     try {
       setActionBusy(true)
@@ -344,19 +360,28 @@ function ChamberContent() {
       {/* Transcript by round */}
       {rounds.map((round) => (
         <div key={round}>
-          <h2>{round === 0 ? 'The Question' : `Round ${round}`}</h2>
+          <h2>{round === 0 ? 'The Question & Grounding' : `Round ${round}`}</h2>
           {discussion
             .filter((m) => m.round === round)
             .map((m) => {
+              const isWeb = m.memberName === 'Web Search'
               const color =
                 m.kind === 'user'
                   ? 'var(--accent)'
-                  : memberColors[m.memberId || ''] || 'var(--text-secondary)'
-              const initials = (m.memberName || '??').slice(0, 2).toUpperCase()
+                  : isWeb
+                    ? '#38bdf8'
+                    : memberColors[m.memberId || ''] || 'var(--text-secondary)'
+              const initials = isWeb ? '🔍' : (m.memberName || '??').slice(0, 2).toUpperCase()
 
               return (
                 <div key={m.id} className="message-bubble">
-                  <div className="avatar" style={{ background: color }}>
+                  <div
+                    className="avatar"
+                    style={{
+                      background: isWeb ? 'rgba(56, 189, 248, 0.15)' : color,
+                      color: isWeb ? '#38bdf8' : '#fff',
+                    }}
+                  >
                     {initials}
                   </div>
                   <div className="message-body">
@@ -366,7 +391,9 @@ function ChamberContent() {
                       </span>
                       <MessageMeta m={m} />
                     </div>
-                    <div className="message-content">{m.content}</div>
+                    <div className="message-content" style={{ whiteSpace: 'pre-wrap' }}>
+                      {m.content}
+                    </div>
                   </div>
                 </div>
               )
@@ -381,6 +408,43 @@ function ChamberContent() {
           <span className="dot" />
           <span className="dot" />
           <span style={{ marginLeft: 8, fontSize: '0.82rem' }}>Council is deliberating…</span>
+        </div>
+      )}
+
+      {/* User mid-deliberation intervention chat box */}
+      {running && (
+        <div style={{ marginTop: 24, marginBottom: 20 }}>
+          <div
+            className="chat-input-box"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-accent)' }}
+          >
+            <textarea
+              placeholder="Interrupt / Steer the council (e.g. 'Focus on latency tradeoffs', 'What about caching?')..."
+              value={interventionText}
+              onChange={(e) => setInterventionText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleIntervene()
+                }
+              }}
+              rows={2}
+              disabled={actionBusy}
+            />
+            <button
+              className="send-btn"
+              onClick={handleIntervene}
+              disabled={actionBusy || !interventionText.trim()}
+              title="Send directive to council"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+          <p className="muted" style={{ fontSize: '0.74rem', marginTop: 4, textAlign: 'right' }}>
+            ✦ Your message will be injected directly into the active debate.
+          </p>
         </div>
       )}
 

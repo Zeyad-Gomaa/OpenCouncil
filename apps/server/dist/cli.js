@@ -494,6 +494,199 @@ var init_strategies = __esm({
   }
 });
 
+// apps/server/src/engine/web-search.ts
+async function searchWeb(query, maxResults = 5, timeoutMs = 8e3) {
+  const cleanQuery = query.trim().slice(0, 400);
+  if (!cleanQuery) return [];
+  if (process.env.TAVILY_API_KEY) {
+    try {
+      const res = await searchTavily(cleanQuery, process.env.TAVILY_API_KEY, maxResults, timeoutMs);
+      if (res.length > 0) return res;
+    } catch {
+    }
+  }
+  if (process.env.BRAVE_API_KEY) {
+    try {
+      const res = await searchBrave(cleanQuery, process.env.BRAVE_API_KEY, maxResults, timeoutMs);
+      if (res.length > 0) return res;
+    } catch {
+    }
+  }
+  if (process.env.SEARXNG_URL) {
+    try {
+      const res = await searchSearXNG(cleanQuery, process.env.SEARXNG_URL, maxResults, timeoutMs);
+      if (res.length > 0) return res;
+    } catch {
+    }
+  }
+  try {
+    return await searchDuckDuckGo(cleanQuery, maxResults, timeoutMs);
+  } catch {
+    return [];
+  }
+}
+async function searchTavily(query, apiKey, maxResults, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults }),
+      signal: controller.signal
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.results ?? []).slice(0, maxResults).map((r) => ({
+      title: r.title || "Web Result",
+      url: r.url || "",
+      snippet: (r.content || "").slice(0, 300)
+    }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function searchBrave(query, apiKey, maxResults, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
+      {
+        headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
+        signal: controller.signal
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
+      title: r.title || "Web Result",
+      url: r.url || "",
+      snippet: (r.description || "").slice(0, 300)
+    }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function searchSearXNG(query, baseUrl, maxResults, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = new URL("/search", baseUrl);
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "json");
+    const res = await fetch(url.toString(), { signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.results ?? []).slice(0, maxResults).map((r) => ({
+      title: r.title || "Web Result",
+      url: r.url || "",
+      snippet: (r.content || "").slice(0, 300)
+    }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function searchDuckDuckGo(query, maxResults, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch("https://html.duckduckgo.com/html/", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": USER_AGENT
+      },
+      body: new URLSearchParams({ q: query, b: "" }).toString(),
+      signal: controller.signal
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const results = [];
+    const blockRegex = /<div class="result__body">([\s\S]*?)<\/div>\s*<\/div>/gi;
+    let match;
+    while ((match = blockRegex.exec(html)) !== null && results.length < maxResults) {
+      const block = match[1] ?? "";
+      const titleMatch = /<a[^>]*class="result__url"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+      const linkMatch = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+      const snippetMatch = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+      const rawUrl = linkMatch?.[1] || titleMatch?.[1] || "";
+      const rawTitle = linkMatch?.[2] || titleMatch?.[2] || "";
+      const rawSnippet = snippetMatch?.[1] || "";
+      let cleanUrl = rawUrl;
+      if (rawUrl.includes("uddg=")) {
+        try {
+          const matchUddg = /uddg=([^&]+)/.exec(rawUrl);
+          if (matchUddg && matchUddg[1]) {
+            cleanUrl = decodeURIComponent(matchUddg[1]);
+          }
+        } catch {
+        }
+      }
+      const cleanTitle = stripHtml(rawTitle).trim();
+      const cleanSnippet = stripHtml(rawSnippet).trim();
+      if (cleanTitle && cleanSnippet && cleanUrl.startsWith("http")) {
+        results.push({
+          title: cleanTitle,
+          url: cleanUrl,
+          snippet: cleanSnippet
+        });
+      }
+    }
+    if (results.length > 0) return results;
+    const apiRes = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      {
+        headers: { "user-agent": USER_AGENT },
+        signal: controller.signal
+      }
+    );
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      if (data.AbstractText && data.AbstractURL) {
+        results.push({
+          title: data.Heading || query,
+          url: data.AbstractURL,
+          snippet: data.AbstractText.slice(0, 300)
+        });
+      }
+      for (const topic of data.RelatedTopics || []) {
+        if (results.length >= maxResults) break;
+        if (topic.Text && topic.FirstURL) {
+          results.push({
+            title: topic.Text.split(" - ")[0] || query,
+            url: topic.FirstURL,
+            snippet: topic.Text.slice(0, 300)
+          });
+        }
+      }
+    }
+    return results;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function stripHtml(html) {
+  return html.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+}
+function formatSearchResults(results) {
+  if (results.length === 0) return "";
+  return `=== LIVE WEB RESEARCH & SOURCES ===
+` + results.map(
+    (r, i) => `[Source ${i + 1}]: "${r.title}"
+URL: ${r.url}
+Summary: ${r.snippet}`
+  ).join("\n\n") + `
+====================================`;
+}
+var USER_AGENT;
+var init_web_search = __esm({
+  "apps/server/src/engine/web-search.ts"() {
+    "use strict";
+    USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  }
+});
+
 // apps/server/src/engine/runner.ts
 var runner_exports = {};
 __export(runner_exports, {
@@ -515,6 +708,14 @@ function computeCost(promptTokens, completionTokens, inPrice, outPrice) {
 }
 function formatTranscriptForMember(transcript, currentMemberId, currentMemberName) {
   return transcript.map((e) => {
+    if (e.memberId === "user") {
+      return `[USER DIRECTIVE in Round ${e.round}]:
+${e.content}`;
+    }
+    if (e.memberId === "system_web") {
+      return `[WEB SEARCH EVIDENCE in Round ${e.round}]:
+${e.content}`;
+    }
     const isSelf = e.memberId === currentMemberId;
     if (isSelf) {
       return `[YOU (@${currentMemberName}) in Round ${e.round}]:
@@ -542,6 +743,7 @@ var init_runner = __esm({
     init_http();
     init_moderator();
     init_strategies();
+    init_web_search();
     CALL_TIMEOUT_MS = 12e4;
     SessionRunner = class {
       constructor(deps) {
@@ -587,6 +789,49 @@ var init_runner = __esm({
           });
           const strategy = getStrategy(council.strategy);
           const transcript = [];
+          try {
+            const searchResults = await searchWeb(topic, 5, 6e3);
+            if (searchResults.length > 0) {
+              const webFormatted = formatSearchResults(searchResults);
+              transcript.push({
+                speaker: "Web Research",
+                memberId: "system_web",
+                round: 0,
+                content: webFormatted
+              });
+              const searchMsgId = this.deps.insertMessage({
+                sessionId,
+                memberId: null,
+                memberName: "Web Search",
+                kind: "system",
+                round: 0,
+                roundPosition: 1,
+                content: `\u{1F50D} **Live Web Research Found:**
+
+${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
+   ${r.snippet}`).join("\n\n")}`
+              });
+              bus.publish({
+                type: "message.created",
+                sessionId,
+                message: {
+                  id: String(searchMsgId),
+                  sessionId,
+                  memberId: null,
+                  memberName: "Web Search",
+                  role: "assistant",
+                  kind: "system",
+                  round: 0,
+                  content: `\u{1F50D} **Live Web Research Found:**
+
+${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
+   ${r.snippet}`).join("\n\n")}`,
+                  createdAt: (/* @__PURE__ */ new Date()).toISOString()
+                }
+              });
+            }
+          } catch {
+          }
           let roundNum = 0;
           let totalPlannedRounds = council.rounds;
           while (roundNum < totalPlannedRounds) {
@@ -595,6 +840,17 @@ var init_runner = __esm({
             if (controller && controller.shouldConcludeEarly()) {
               bus.publish({ type: "session.concluding", sessionId, reason: "concluded early" });
               break;
+            }
+            if (controller) {
+              const interventions = controller.consumeInterventions();
+              for (const text of interventions) {
+                transcript.push({
+                  speaker: "User Directive",
+                  memberId: "user",
+                  round: roundNum,
+                  content: text
+                });
+              }
             }
             bus.publish({ type: "round.started", sessionId, round: roundNum });
             const memberIds = activeMembers.map((m) => m.id);
@@ -605,6 +861,17 @@ var init_runner = __esm({
                 if (!member) continue;
                 if (signal.aborted) throw new Error("cancelled");
                 if (controller && controller.shouldConcludeEarly()) break;
+                if (controller) {
+                  const liveInterventions = controller.consumeInterventions();
+                  for (const text of liveInterventions) {
+                    transcript.push({
+                      speaker: "User Directive",
+                      memberId: "user",
+                      round: roundNum,
+                      content: text
+                    });
+                  }
+                }
                 await this.callMember(
                   sessionId,
                   member,
@@ -697,7 +964,9 @@ ${member.systemPrompt}
 1. YOU ARE @${member.name}. NEVER refer to yourself in the third person. Do NOT say "I agree with @${member.name}" or "@${member.name} made a point".
 2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.
 3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").
-4. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
+4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.
+5. WEB EVIDENCE: If live web research is provided, utilize and cite the factual sources to ground your arguments.
+6. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
           );
           messages.push({ role: "system", content: systemPromptParts.join("\n") });
           if (includeTranscript && transcript.length > 0) {
@@ -1012,7 +1281,7 @@ var init_events = __esm({
 
 // packages/shared/dist/schemas.js
 import { z } from "zod";
-var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, configImportSchema;
+var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, sessionInterveneSchema, configImportSchema;
 var init_schemas = __esm({
   "packages/shared/dist/schemas.js"() {
     "use strict";
@@ -1083,6 +1352,9 @@ var init_schemas = __esm({
     });
     sessionConcludeSchema = z.object({
       reason: z.string().max(500).optional()
+    });
+    sessionInterveneSchema = z.object({
+      content: z.string().min(1).max(4e3)
     });
     configImportSchema = z.object({
       version: z.literal(1).optional(),
@@ -1730,6 +2002,40 @@ function registerSessionRoutes(app, deps) {
     if (!ok) throw new AppError(400, "invalid_state", "session is not currently running");
     logActivity(db, "session.concluding", { sessionId: id, reason: body.reason });
     return { ok: true };
+  });
+  app.post("/api/v1/sessions/:id/intervene", async (req, reply) => {
+    const { id } = req.params;
+    const row = db.prepare("SELECT status FROM sessions WHERE id = ?").get(id);
+    if (!row) throw new AppError(404, "not_found", "session not found");
+    const body = sessionInterveneSchema.parse(req.body);
+    const ok = sessions.interveneSession(id, body.content);
+    if (!ok) throw new AppError(400, "invalid_state", "session is not currently running");
+    const lastRound = Number(
+      db.prepare("SELECT COALESCE(MAX(round), 0) AS max_round FROM messages WHERE session_id = ?").get(id).max_round
+    );
+    const msgId = db.prepare(
+      `INSERT INTO messages (session_id, member_id, member_name, role, kind, round, round_position, content)
+         VALUES (?, NULL, 'You (Directive)', 'user', 'user', ?, 99, ?)`
+    ).run(id, lastRound || 1, body.content).lastInsertRowid;
+    const msgDTO = {
+      id: String(msgId),
+      sessionId: id,
+      memberId: null,
+      memberName: "You (Directive)",
+      role: "user",
+      kind: "user",
+      round: lastRound || 1,
+      content: body.content,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    bus.publish({
+      type: "message.created",
+      sessionId: id,
+      message: msgDTO
+    });
+    logActivity(db, "session.intervened", { sessionId: id });
+    reply.code(201);
+    return msgDTO;
   });
   app.post("/api/v1/sessions/:id/clone", async (req, reply) => {
     const { id } = req.params;
@@ -2519,6 +2825,7 @@ var init_session_manager = __esm({
       abortController = new AbortController();
       additionalRounds = 0;
       concludeEarly = false;
+      interventions = [];
       get signal() {
         return this.abortController.signal;
       }
@@ -2534,6 +2841,14 @@ var init_session_manager = __esm({
       }
       conclude() {
         this.concludeEarly = true;
+      }
+      intervene(content) {
+        this.interventions.push(content);
+      }
+      consumeInterventions() {
+        const list = [...this.interventions];
+        this.interventions = [];
+        return list;
       }
       abort() {
         this.abortController.abort();
@@ -2598,6 +2913,12 @@ var init_session_manager = __esm({
         ctrl.conclude();
         return true;
       }
+      interveneSession(sessionId, content) {
+        const ctrl = this.controllers.get(sessionId);
+        if (!ctrl) return false;
+        ctrl.intervene(content);
+        return true;
+      }
       isRunning(sessionId) {
         return this.controllers.has(sessionId);
       }
@@ -2608,7 +2929,7 @@ var init_session_manager = __esm({
 // apps/server/src/cli.ts
 init_crypto();
 import path4 from "node:path";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { randomUUID as randomUUID7 } from "node:crypto";
 function parseArgs(argv) {
@@ -3036,29 +3357,41 @@ async function main() {
     await app.register(staticHandler, {
       root: webOutDir,
       prefix: "/",
-      wildcard: false,
-      index: "index.html"
+      wildcard: true,
+      index: ["index.html"]
     });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith("/api/") || req.url === "/api") {
         reply.status(404).send({ error: { code: "not_found", message: "no such API route" } });
         return;
       }
-      const urlPath = decodeURIComponent(req.url.split("?")[0]);
-      if (!urlPath.endsWith("/")) {
-        reply.redirect(301, `${urlPath}/`);
+      const rawPath = req.url.split("?")[0] || "/";
+      const urlPath = decodeURIComponent(rawPath);
+      const fileCandidate = path4.join(webOutDir, urlPath);
+      if (existsSync(fileCandidate) && statSync(fileCandidate).isFile()) {
+        reply.sendFile(path4.relative(webOutDir, fileCandidate));
         return;
       }
-      const candidate = path4.join(webOutDir, urlPath, "index.html");
-      if (existsSync(candidate) && !path4.relative(webOutDir, candidate).startsWith("..")) {
-        reply.type("text/html; charset=utf-8").send(createReadStream(candidate));
+      const dirIndexCandidate = path4.join(webOutDir, urlPath, "index.html");
+      if (existsSync(dirIndexCandidate)) {
+        reply.type("text/html; charset=utf-8").send(createReadStream(dirIndexCandidate));
+        return;
+      }
+      const htmlCandidate = path4.join(webOutDir, `${urlPath}.html`);
+      if (existsSync(htmlCandidate)) {
+        reply.type("text/html; charset=utf-8").send(createReadStream(htmlCandidate));
+        return;
+      }
+      const rootIndex = path4.join(webOutDir, "index.html");
+      if (existsSync(rootIndex)) {
+        reply.type("text/html; charset=utf-8").send(createReadStream(rootIndex));
+        return;
+      }
+      const fallback = path4.join(webOutDir, "404.html");
+      if (existsSync(fallback)) {
+        reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
       } else {
-        const fallback = path4.join(webOutDir, "404.html");
-        if (existsSync(fallback)) {
-          reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
-        } else {
-          reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
-        }
+        reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
       }
     });
     uiReady = true;

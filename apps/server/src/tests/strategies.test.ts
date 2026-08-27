@@ -40,4 +40,15 @@ describe('strategies', () => {
     expect(formattedForVisionary).toContain('[YOU (@Visionary) in Round 1]:')
     expect(formattedForVisionary).toContain('[@Pragmatist in Round 1]:')
   })
+
+  it('formatSearchResults generates clean citations and summaries', async () => {
+    const { formatSearchResults } = await import('../engine/web-search.js')
+    const formatted = formatSearchResults([
+      { title: 'OpenCouncil Docs', url: 'https://opencouncil.dev', snippet: 'A multi-agent AI deliberation platform.' },
+    ])
+    expect(formatted).toContain('=== LIVE WEB RESEARCH & SOURCES ===')
+    expect(formatted).toContain('[Source 1]: "OpenCouncil Docs"')
+    expect(formatted).toContain('URL: https://opencouncil.dev')
+    expect(formatted).toContain('A multi-agent AI deliberation platform.')
+  })
 })

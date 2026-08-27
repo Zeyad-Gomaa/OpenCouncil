@@ -8,6 +8,7 @@ import { Semaphore, withRetry } from './execution-policy.js'
 import { AuthError, ProviderHttpError, RateLimitError, TimeoutError } from '../lib/http.js'
 import { buildSynthesisMessages } from './moderator.js'
 import { getStrategy } from './strategies.js'
+import { formatSearchResults, searchWeb } from './web-search.js'
 import type { SessionBus } from './bus.js'
 
 export interface TranscriptEntry {
@@ -23,6 +24,8 @@ export interface SessionController {
   getAdditionalRounds(): number
   extend(additionalRounds: number): number
   conclude(reason?: string): void
+  intervene(content: string): void
+  consumeInterventions(): string[]
 }
 
 export function isSessionController(c: unknown): c is SessionController {
@@ -106,6 +109,12 @@ export function formatTranscriptForMember(
 ): string {
   return transcript
     .map((e) => {
+      if (e.memberId === 'user') {
+        return `[USER DIRECTIVE in Round ${e.round}]:\n${e.content}`
+      }
+      if (e.memberId === 'system_web') {
+        return `[WEB SEARCH EVIDENCE in Round ${e.round}]:\n${e.content}`
+      }
       const isSelf = e.memberId === currentMemberId
       if (isSelf) {
         return `[YOU (@${currentMemberName}) in Round ${e.round}]:\n${e.content}`
@@ -179,6 +188,46 @@ export class SessionRunner {
       const strategy = getStrategy(council.strategy)
       const transcript: TranscriptEntry[] = []
 
+      // 1. Automatic live web research grounding
+      try {
+        const searchResults = await searchWeb(topic, 5, 6000)
+        if (searchResults.length > 0) {
+          const webFormatted = formatSearchResults(searchResults)
+          transcript.push({
+            speaker: 'Web Research',
+            memberId: 'system_web',
+            round: 0,
+            content: webFormatted,
+          })
+          const searchMsgId = this.deps.insertMessage({
+            sessionId,
+            memberId: null,
+            memberName: 'Web Search',
+            kind: 'system',
+            round: 0,
+            roundPosition: 1,
+            content: `🔍 **Live Web Research Found:**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+          })
+          bus.publish({
+            type: 'message.created',
+            sessionId,
+            message: {
+              id: String(searchMsgId),
+              sessionId,
+              memberId: null,
+              memberName: 'Web Search',
+              role: 'assistant',
+              kind: 'system',
+              round: 0,
+              content: `🔍 **Live Web Research Found:**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+              createdAt: new Date().toISOString(),
+            },
+          })
+        }
+      } catch {
+        /* search is non-blocking */
+      }
+
       let roundNum = 0
       let totalPlannedRounds = council.rounds
 
@@ -188,6 +237,19 @@ export class SessionRunner {
         if (controller && controller.shouldConcludeEarly()) {
           bus.publish({ type: 'session.concluding', sessionId, reason: 'concluded early' })
           break
+        }
+
+        // Process any mid-deliberation user interruptions
+        if (controller) {
+          const interventions = controller.consumeInterventions()
+          for (const text of interventions) {
+            transcript.push({
+              speaker: 'User Directive',
+              memberId: 'user',
+              round: roundNum,
+              content: text,
+            })
+          }
         }
 
         bus.publish({ type: 'round.started', sessionId, round: roundNum })
@@ -201,6 +263,19 @@ export class SessionRunner {
             if (!member) continue
             if (signal.aborted) throw new Error('cancelled')
             if (controller && controller.shouldConcludeEarly()) break
+
+            // Check for user interventions between turns
+            if (controller) {
+              const liveInterventions = controller.consumeInterventions()
+              for (const text of liveInterventions) {
+                transcript.push({
+                  speaker: 'User Directive',
+                  memberId: 'user',
+                  round: roundNum,
+                  content: text,
+                })
+              }
+            }
 
             await this.callMember(
               sessionId,
@@ -314,7 +389,9 @@ export class SessionRunner {
           `1. YOU ARE @${member.name}. NEVER refer to yourself in the third person. Do NOT say "I agree with @${member.name}" or "@${member.name} made a point".\n` +
           `2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.\n` +
           `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
-          `4. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
+          `4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.\n` +
+          `5. WEB EVIDENCE: If live web research is provided, utilize and cite the factual sources to ground your arguments.\n` +
+          `6. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
       )
 
       messages.push({ role: 'system', content: systemPromptParts.join('\n') })

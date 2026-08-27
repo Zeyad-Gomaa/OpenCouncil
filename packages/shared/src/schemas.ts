@@ -89,6 +89,10 @@ export const sessionConcludeSchema = z.object({
   reason: z.string().max(500).optional(),
 })
 
+export const sessionInterveneSchema = z.object({
+  content: z.string().min(1).max(4_000),
+})
+
 /** Shape of `GET /config/export`, re-validated on import.
  *
  * Distinct from the create schemas because these rows carry their own ids: an

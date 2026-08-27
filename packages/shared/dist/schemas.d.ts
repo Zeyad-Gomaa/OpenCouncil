@@ -240,6 +240,13 @@ export declare const sessionConcludeSchema: z.ZodObject<{
 }, {
     reason?: string | undefined;
 }>;
+export declare const sessionInterveneSchema: z.ZodObject<{
+    content: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    content: string;
+}, {
+    content: string;
+}>;
 /** Shape of `GET /config/export`, re-validated on import.
  *
  * Distinct from the create schemas because these rows carry their own ids: an

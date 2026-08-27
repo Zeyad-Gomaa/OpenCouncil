@@ -5,7 +5,7 @@
  * root, whether from a source checkout or a global/git npm install.
  */
 import path from 'node:path'
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream, existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { encryptSecret } from './vault/crypto.js'
@@ -518,31 +518,52 @@ export async function main(): Promise<void> {
     await app.register(staticHandler, {
       root: webOutDir,
       prefix: '/',
-      wildcard: false,
-      index: 'index.html',
+      wildcard: true,
+      index: ['index.html'],
     })
-    // Directory-style URLs (/sessions/view/) resolve to their index.html.
+
+    // SPA and HTML route resolver for clean Next.js export routes
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/') || req.url === '/api') {
         reply.status(404).send({ error: { code: 'not_found', message: 'no such API route' } })
         return
       }
-      const urlPath = decodeURIComponent(req.url.split('?')[0]!)
-      if (!urlPath.endsWith('/')) {
-        // /sessions/view → /sessions/view/
-        reply.redirect(301, `${urlPath}/`)
+      const rawPath = req.url.split('?')[0] || '/'
+      const urlPath = decodeURIComponent(rawPath)
+
+      // 1. Direct file candidate
+      const fileCandidate = path.join(webOutDir, urlPath)
+      if (existsSync(fileCandidate) && statSync(fileCandidate).isFile()) {
+        reply.sendFile(path.relative(webOutDir, fileCandidate))
         return
       }
-      const candidate = path.join(webOutDir, urlPath, 'index.html')
-      if (existsSync(candidate) && !path.relative(webOutDir, candidate).startsWith('..')) {
-        reply.type('text/html; charset=utf-8').send(createReadStream(candidate))
+
+      // 2. Directory index.html candidate (e.g. /sessions/view/ -> /sessions/view/index.html)
+      const dirIndexCandidate = path.join(webOutDir, urlPath, 'index.html')
+      if (existsSync(dirIndexCandidate)) {
+        reply.type('text/html; charset=utf-8').send(createReadStream(dirIndexCandidate))
+        return
+      }
+
+      // 3. Named html candidate (e.g. /sessions -> /sessions.html or /sessions/index.html)
+      const htmlCandidate = path.join(webOutDir, `${urlPath}.html`)
+      if (existsSync(htmlCandidate)) {
+        reply.type('text/html; charset=utf-8').send(createReadStream(htmlCandidate))
+        return
+      }
+
+      // 4. Root index.html fallback for client-side routing
+      const rootIndex = path.join(webOutDir, 'index.html')
+      if (existsSync(rootIndex)) {
+        reply.type('text/html; charset=utf-8').send(createReadStream(rootIndex))
+        return
+      }
+
+      const fallback = path.join(webOutDir, '404.html')
+      if (existsSync(fallback)) {
+        reply.status(404).type('text/html; charset=utf-8').send(createReadStream(fallback))
       } else {
-        const fallback = path.join(webOutDir, '404.html')
-        if (existsSync(fallback)) {
-          reply.status(404).type('text/html; charset=utf-8').send(createReadStream(fallback))
-        } else {
-          reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
-        }
+        reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
       }
     })
     uiReady = true

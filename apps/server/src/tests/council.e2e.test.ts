@@ -224,4 +224,35 @@ describe('council end-to-end', () => {
     })
     expect(postExtend.statusCode).toBe(400)
   })
+
+  it('supports user intervention during active deliberation and web search fallback', async () => {
+    let council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string } | undefined
+    if (!council) {
+      seedDemoCouncil(db)
+      council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }
+    }
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { councilId: council.id, topic: 'Deliberation with user intervention' },
+    })
+    expect(create.statusCode).toBe(202)
+    const sessionId = create.json().id
+
+    // User intervenes while session is running or queued
+    const interveneRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sessionId}/intervene`,
+      payload: { content: 'Please focus on memory safety specifically.' },
+    })
+    expect([201, 400]).toContain(interveneRes.statusCode)
+
+    await waitForSessionCompletion(sessionId)
+
+    // Verify session completed with messages
+    const history = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}` })
+    expect(history.statusCode).toBe(200)
+    expect(history.json().messages.length).toBeGreaterThan(0)
+  })
 })

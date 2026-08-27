@@ -1,4 +1,4 @@
-/** Session lifecycle manager: create, run async, cancel, extend, conclude, track aborts. */
+/** Session lifecycle manager: create, run async, cancel, extend, conclude, intervene, track aborts. */
 import { randomUUID } from 'node:crypto'
 import type { SessionBus } from './bus.js'
 import { SessionCancelled, type SessionController, type SessionRunner } from './runner.js'
@@ -7,6 +7,7 @@ class ActiveSessionController implements SessionController {
   public readonly abortController = new AbortController()
   private additionalRounds = 0
   private concludeEarly = false
+  private interventions: string[] = []
 
   get signal(): AbortSignal {
     return this.abortController.signal
@@ -27,6 +28,16 @@ class ActiveSessionController implements SessionController {
 
   conclude(): void {
     this.concludeEarly = true
+  }
+
+  intervene(content: string): void {
+    this.interventions.push(content)
+  }
+
+  consumeInterventions(): string[] {
+    const list = [...this.interventions]
+    this.interventions = []
+    return list
   }
 
   abort(): void {
@@ -103,6 +114,13 @@ export class SessionManager {
     const ctrl = this.controllers.get(sessionId)
     if (!ctrl) return false
     ctrl.conclude()
+    return true
+  }
+
+  interveneSession(sessionId: string, content: string): boolean {
+    const ctrl = this.controllers.get(sessionId)
+    if (!ctrl) return false
+    ctrl.intervene(content)
     return true
   }
 

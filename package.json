@@ -1,6 +1,6 @@
 {
   "name": "opencouncil",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Self-hosted BYOK platform where multiple LLMs convene as a council to research, deliberate, and agree.",
   "license": "MIT",
   "author": "Zeyad Gomaa",
@@ -48,7 +48,7 @@
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
     "serve:api": "node apps/server/dist/index.js",
-    "prepare": "node scripts/prepare.js",
+    "prepack": "node scripts/prepare.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

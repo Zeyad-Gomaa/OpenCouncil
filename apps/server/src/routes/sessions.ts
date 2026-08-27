@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { AppError } from '../lib/errors.js'
-import { sessionConcludeSchema, sessionCreateSchema, sessionExtendSchema } from '@opencouncil/shared'
+import { sessionConcludeSchema, sessionCreateSchema, sessionExtendSchema, sessionInterveneSchema } from '@opencouncil/shared'
 import type { SessionBus } from '../engine/bus.js'
 import type { SessionManager } from '../engine/session-manager.js'
 import { logActivity, messageToDTO, sessionToDTO } from './mappers.js'
@@ -171,6 +171,50 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
     logActivity(db, 'session.concluding', { sessionId: id, reason: body.reason })
     return { ok: true }
+  })
+
+  app.post('/api/v1/sessions/:id/intervene', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const row = db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as never | undefined
+    if (!row) throw new AppError(404, 'not_found', 'session not found')
+    const body = sessionInterveneSchema.parse(req.body)
+    const ok = sessions.interveneSession(id, body.content)
+    if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
+
+    const lastRound = Number(
+      (
+        db.prepare('SELECT COALESCE(MAX(round), 0) AS max_round FROM messages WHERE session_id = ?').get(id) as {
+          max_round: number
+        }
+      ).max_round,
+    )
+    const msgId = db
+      .prepare(
+        `INSERT INTO messages (session_id, member_id, member_name, role, kind, round, round_position, content)
+         VALUES (?, NULL, 'You (Directive)', 'user', 'user', ?, 99, ?)`,
+      )
+      .run(id, lastRound || 1, body.content).lastInsertRowid
+
+    const msgDTO = {
+      id: String(msgId),
+      sessionId: id,
+      memberId: null,
+      memberName: 'You (Directive)',
+      role: 'user' as const,
+      kind: 'user' as const,
+      round: lastRound || 1,
+      content: body.content,
+      createdAt: new Date().toISOString(),
+    }
+    bus.publish({
+      type: 'message.created',
+      sessionId: id,
+      message: msgDTO,
+    })
+
+    logActivity(db, 'session.intervened', { sessionId: id })
+    reply.code(201)
+    return msgDTO
   })
 
   app.post('/api/v1/sessions/:id/clone', async (req, reply) => {
