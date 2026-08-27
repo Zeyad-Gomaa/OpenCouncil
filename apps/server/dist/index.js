@@ -2053,11 +2053,9 @@ function stripHtml(html) {
 function formatSearchResults(results) {
   if (results.length === 0) return "";
   return `=== LIVE WEB RESEARCH & SOURCES ===
-` + results.map(
-    (r, i) => `[Source ${i + 1}]: "${r.title}"
+` + results.map((r, i) => `[Source ${i + 1}]: "${r.title}"
 URL: ${r.url}
-Summary: ${r.snippet}`
-  ).join("\n\n") + `
+Summary: ${r.snippet}`).join("\n\n") + `
 ====================================`;
 }
 
@@ -2657,19 +2655,7 @@ import Fastify from "fastify";
 import { randomUUID as randomUUID5 } from "node:crypto";
 
 // apps/server/src/version.ts
-import { readFileSync } from "node:fs";
-import path3 from "node:path";
-import { fileURLToPath } from "node:url";
-function read() {
-  try {
-    const here = path3.dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(path3.join(here, "..", "..", "..", "package.json"), "utf8"));
-    return pkg.version ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-var VERSION = read();
+var VERSION = "0.3.0";
 
 // apps/server/src/app.ts
 var INSTANCE_ID = randomUUID5();

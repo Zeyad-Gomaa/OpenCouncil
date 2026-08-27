@@ -158,8 +158,8 @@ function HomeContent() {
               {selected && (
                 <div className="chat-input-meta">
                   <span className="muted" style={{ fontSize: '0.78rem' }}>
-                    {selected.strategy === 'debate' ? '⚔ Debate' : '↻ Round Robin'} · {selected.members.length}{' '}
-                    members · {selected.rounds} {selected.rounds === 1 ? 'round' : 'rounds'}
+                    {selected.strategy === 'debate' ? '⚔ Debate' : '↻ Round Robin'} · {selected.members.length} members
+                    · {selected.rounds} {selected.rounds === 1 ? 'round' : 'rounds'}
                     {selected.moderatorMemberId ? ' · Moderated' : ''}
                   </span>
                   <span className="muted" style={{ fontSize: '0.75rem' }}>
@@ -190,9 +190,7 @@ function HomeContent() {
                 className="session-card"
                 style={{ animationDelay: `${i * 0.05}s` }}
               >
-                <div className="session-topic">
-                  {s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}
-                </div>
+                <div className="session-topic">{s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}</div>
                 <div className="session-meta">
                   <span className={`badge ${s.status}`}>{s.status}</span>
                   <span>{s.councilName || 'Unknown'}</span>

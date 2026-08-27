@@ -80,11 +80,7 @@ export interface RunnerDeps {
     inputPerMTokUsd: number | null
     outputPerMTokUsd: number | null
   } | null
-  updateSessionStatus(
-    sessionId: string,
-    status: 'running' | 'completed' | 'failed' | 'cancelled',
-    error?: string,
-  ): void
+  updateSessionStatus(sessionId: string, status: 'running' | 'completed' | 'failed' | 'cancelled', error?: string): void
 }
 
 const CALL_TIMEOUT_MS = 120_000

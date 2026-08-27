@@ -83,9 +83,7 @@ export default function SessionsPage() {
               className="session-card"
               style={{ animationDelay: `${i * 0.04}s` }}
             >
-              <div className="session-topic">
-                {s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}
-              </div>
+              <div className="session-topic">{s.topic.length > 120 ? s.topic.slice(0, 120) + '…' : s.topic}</div>
               <div className="session-meta">
                 <span className={`badge ${s.status}`}>{s.status}</span>
                 <span>{s.councilName || 'Unknown council'}</span>

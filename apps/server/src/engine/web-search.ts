@@ -102,7 +102,9 @@ async function searchBrave(
       },
     )
     if (!res.ok) return []
-    const data = (await res.json()) as { web?: { results?: Array<{ title?: string; url?: string; description?: string }> } }
+    const data = (await res.json()) as {
+      web?: { results?: Array<{ title?: string; url?: string; description?: string }> }
+    }
     return (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
       title: r.title || 'Web Result',
       url: r.url || '',
@@ -260,12 +262,7 @@ export function formatSearchResults(results: SearchResult[]): string {
   if (results.length === 0) return ''
   return (
     `=== LIVE WEB RESEARCH & SOURCES ===\n` +
-    results
-      .map(
-        (r, i) =>
-          `[Source ${i + 1}]: "${r.title}"\nURL: ${r.url}\nSummary: ${r.snippet}`,
-      )
-      .join('\n\n') +
+    results.map((r, i) => `[Source ${i + 1}]: "${r.title}"\nURL: ${r.url}\nSummary: ${r.snippet}`).join('\n\n') +
     `\n====================================`
   )
 }

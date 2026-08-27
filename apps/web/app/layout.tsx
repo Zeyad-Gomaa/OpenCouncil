@@ -1,27 +1,21 @@
-import type { Metadata } from 'next';
-import Nav from './components/Nav';
-import './globals.css';
+import type { Metadata } from 'next'
+import Nav from './components/Nav'
+import './globals.css'
 
 export const metadata: Metadata = {
   title: 'OpenCouncil',
   description: 'Structured deliberation and council sessions',
-};
+}
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
         <div className="shell">
           <Nav />
-          <main className="main">
-            {children}
-          </main>
+          <main className="main">{children}</main>
         </div>
       </body>
     </html>
-  );
+  )
 }

@@ -257,9 +257,7 @@ function ChamberContent() {
       {/* Header */}
       <div className="chamber-header">
         <div>
-          <p className="eyebrow">
-            Live Deliberation {running && currentRound > 0 ? `· Round ${currentRound}` : ''}
-          </p>
+          <p className="eyebrow">Live Deliberation {running && currentRound > 0 ? `· Round ${currentRound}` : ''}</p>
           <h1 style={{ margin: 0 }}>{session.councilName || 'Deliberation'}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
             <span className={`badge ${session.status}`}>{session.status}</span>
@@ -340,9 +338,7 @@ function ChamberContent() {
             <span className={`status-dot ${st}`} />
             <span>{memberNames[id] ?? id}</span>
             {st === 'thinking' || st === 'streaming' ? (
-              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', marginLeft: 4 }}>
-                {STATUS_LABEL[st]}
-              </span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', marginLeft: 4 }}>{STATUS_LABEL[st]}</span>
             ) : null}
           </div>
         ))}
@@ -466,9 +462,7 @@ function ChamberContent() {
         </div>
         <div className="usage-item">
           <span>Cost</span>
-          <span className="usage-value">
-            {liveUsage.costUsd > 0 ? `$${liveUsage.costUsd.toFixed(4)}` : '$0'}
-          </span>
+          <span className="usage-value">{liveUsage.costUsd > 0 ? `$${liveUsage.costUsd.toFixed(4)}` : '$0'}</span>
         </div>
         <div className="usage-item">
           <span>Messages</span>

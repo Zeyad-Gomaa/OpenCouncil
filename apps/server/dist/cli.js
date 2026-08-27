@@ -672,11 +672,9 @@ function stripHtml(html) {
 function formatSearchResults(results) {
   if (results.length === 0) return "";
   return `=== LIVE WEB RESEARCH & SOURCES ===
-` + results.map(
-    (r, i) => `[Source ${i + 1}]: "${r.title}"
+` + results.map((r, i) => `[Source ${i + 1}]: "${r.title}"
 URL: ${r.url}
-Summary: ${r.snippet}`
-  ).join("\n\n") + `
+Summary: ${r.snippet}`).join("\n\n") + `
 ====================================`;
 }
 var USER_AGENT;
@@ -1201,23 +1199,11 @@ var version_exports = {};
 __export(version_exports, {
   VERSION: () => VERSION
 });
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-function read() {
-  try {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(path.join(here, "..", "..", "..", "package.json"), "utf8"));
-    return pkg.version ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 var VERSION;
 var init_version = __esm({
   "apps/server/src/version.ts"() {
     "use strict";
-    VERSION = read();
+    VERSION = "0.3.0";
   }
 });
 
@@ -2457,10 +2443,10 @@ var env_exports = {};
 __export(env_exports, {
   loadEnvFile: () => loadEnvFile
 });
-import path2 from "node:path";
+import path from "node:path";
 function loadEnvFile(cwd = process.cwd()) {
   const override = process.env.OPEN_COUNCIL_ENV_FILE;
-  const file = override ? path2.resolve(cwd, override) : path2.join(cwd, ".env");
+  const file = override ? path.resolve(cwd, override) : path.join(cwd, ".env");
   try {
     process.loadEnvFile(file);
     return file;
@@ -2482,16 +2468,16 @@ __export(config_exports2, {
 });
 import { randomBytes as randomBytes2 } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import path3 from "node:path";
+import path2 from "node:path";
 import { z as z2 } from "zod";
 function loadConfig(env = process.env) {
   const parsed = envSchema.parse(env);
   const isAbsolute = parsed.DATABASE_PATH.startsWith("/");
   let databasePath = parsed.DATABASE_PATH;
   if (!isAbsolute && !parsed.DATABASE_PATH.includes(process.cwd())) {
-    databasePath = path3.join(process.cwd(), parsed.DATABASE_PATH);
+    databasePath = path2.join(process.cwd(), parsed.DATABASE_PATH);
   }
-  const dataDir = path3.dirname(databasePath);
+  const dataDir = path2.dirname(databasePath);
   mkdirSync(dataDir, { recursive: true });
   const secretKey = parsed.OPEN_COUNCIL_SECRET_KEY ?? randomBytes2(32).toString("hex");
   return {
@@ -2928,9 +2914,9 @@ var init_session_manager = __esm({
 
 // apps/server/src/cli.ts
 init_crypto();
-import path4 from "node:path";
+import path3 from "node:path";
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomUUID as randomUUID7 } from "node:crypto";
 function parseArgs(argv) {
   const args = {
@@ -3221,7 +3207,7 @@ function runHeadless(args, db, packageRoot) {
         node: process.versions.node,
         database: "ok",
         migrations: Number(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n) > 0 ? "ok" : "missing",
-        staticAssets: existsSync(path4.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync(path4.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
+        staticAssets: existsSync(path3.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync(path3.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
         vault: process.env.OPEN_COUNCIL_SECRET_KEY ? "durable-key-configured" : "ephemeral-key-warning"
       },
       args.json
@@ -3296,10 +3282,10 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  const here = path4.dirname(fileURLToPath2(import.meta.url));
-  const packageRoot = path4.resolve(here, "..", "..", "..");
-  const packagedWebDir = path4.join(here, "public");
-  const sourceWebDir = path4.join(packageRoot, "apps", "web", "out");
+  const here = path3.dirname(fileURLToPath(import.meta.url));
+  const packageRoot = path3.resolve(here, "..", "..", "..");
+  const packagedWebDir = path3.join(here, "public");
+  const sourceWebDir = path3.join(packageRoot, "apps", "web", "out");
   const webOutDir = existsSync(packagedWebDir) ? packagedWebDir : sourceWebDir;
   if (args.host !== void 0) process.env.HOST = args.host;
   if (args.port !== void 0) process.env.PORT = String(args.port);
@@ -3367,27 +3353,27 @@ async function main() {
       }
       const rawPath = req.url.split("?")[0] || "/";
       const urlPath = decodeURIComponent(rawPath);
-      const fileCandidate = path4.join(webOutDir, urlPath);
+      const fileCandidate = path3.join(webOutDir, urlPath);
       if (existsSync(fileCandidate) && statSync(fileCandidate).isFile()) {
-        reply.sendFile(path4.relative(webOutDir, fileCandidate));
+        reply.sendFile(path3.relative(webOutDir, fileCandidate));
         return;
       }
-      const dirIndexCandidate = path4.join(webOutDir, urlPath, "index.html");
+      const dirIndexCandidate = path3.join(webOutDir, urlPath, "index.html");
       if (existsSync(dirIndexCandidate)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(dirIndexCandidate));
         return;
       }
-      const htmlCandidate = path4.join(webOutDir, `${urlPath}.html`);
+      const htmlCandidate = path3.join(webOutDir, `${urlPath}.html`);
       if (existsSync(htmlCandidate)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(htmlCandidate));
         return;
       }
-      const rootIndex = path4.join(webOutDir, "index.html");
+      const rootIndex = path3.join(webOutDir, "index.html");
       if (existsSync(rootIndex)) {
         reply.type("text/html; charset=utf-8").send(createReadStream(rootIndex));
         return;
       }
-      const fallback = path4.join(webOutDir, "404.html");
+      const fallback = path3.join(webOutDir, "404.html");
       if (existsSync(fallback)) {
         reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
       } else {

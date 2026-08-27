@@ -133,9 +133,7 @@ export default function ActivityPage() {
                 </td>
                 <td>
                   {e.action}
-                  {e.detail ? (
-                    <span className="muted"> — {e.detail.slice(0, 120)}</span>
-                  ) : null}
+                  {e.detail ? <span className="muted"> — {e.detail.slice(0, 120)}</span> : null}
                 </td>
               </tr>
             ))}

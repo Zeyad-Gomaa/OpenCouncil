@@ -28,16 +28,24 @@ export default function SettingsPage() {
   const [councils, setCouncils] = useState<CouncilDTO[]>([])
 
   const loadProviders = useCallback(() => {
-    apiGet<ProviderDTO[]>('/providers').then(setProviders).catch(() => {})
+    apiGet<ProviderDTO[]>('/providers')
+      .then(setProviders)
+      .catch(() => {})
   }, [])
   const loadModels = useCallback(() => {
-    apiGet<ModelDTO[]>('/models').then(setModels).catch(() => {})
+    apiGet<ModelDTO[]>('/models')
+      .then(setModels)
+      .catch(() => {})
   }, [])
   const loadMembers = useCallback(() => {
-    apiGet<MemberDTO[]>('/members').then(setMembers).catch(() => {})
+    apiGet<MemberDTO[]>('/members')
+      .then(setMembers)
+      .catch(() => {})
   }, [])
   const loadCouncils = useCallback(() => {
-    apiGet<CouncilDTO[]>('/councils').then(setCouncils).catch(() => {})
+    apiGet<CouncilDTO[]>('/councils')
+      .then(setCouncils)
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -170,13 +178,7 @@ function ProvidersTab({ providers, reload }: { providers: ProviderDTO[]; reload:
       ) : (
         <div className="grid-auto">
           {providers.map((p) => (
-            <ProviderCard
-              key={p.id}
-              provider={p}
-              onDelete={handleDelete}
-              onTest={handleTest}
-              onEdit={openEdit}
-            />
+            <ProviderCard key={p.id} provider={p} onDelete={handleDelete} onTest={handleTest} onEdit={openEdit} />
           ))}
         </div>
       )}
@@ -353,13 +355,7 @@ function ModelsTab({
           {filtered.map((m) => {
             const prov = providers.find((p) => p.id === m.providerId)
             return (
-              <ModelCard
-                key={m.id}
-                model={m}
-                providerName={prov?.name}
-                onDelete={handleDelete}
-                onEdit={openEdit}
-              />
+              <ModelCard key={m.id} model={m} providerName={prov?.name} onDelete={handleDelete} onEdit={openEdit} />
             )
           })}
         </div>
@@ -417,15 +413,7 @@ function ModelsTab({
 /*  Members                                                            */
 /* ------------------------------------------------------------------ */
 
-function MembersTab({
-  members,
-  models,
-  reload,
-}: {
-  members: MemberDTO[]
-  models: ModelDTO[]
-  reload: () => void
-}) {
+function MembersTab({ members, models, reload }: { members: MemberDTO[]; models: ModelDTO[]; reload: () => void }) {
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [name, setName] = useState('')

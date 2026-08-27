@@ -9,9 +9,7 @@ interface CouncilCardProps {
 }
 
 export default function CouncilCard({ council, onDelete, onEdit }: CouncilCardProps) {
-  const moderator = council.moderatorMemberId
-    ? council.members.find((m) => m.id === council.moderatorMemberId)
-    : null
+  const moderator = council.moderatorMemberId ? council.members.find((m) => m.id === council.moderatorMemberId) : null
 
   return (
     <div className="council-card">
@@ -34,20 +32,13 @@ export default function CouncilCard({ council, onDelete, onEdit }: CouncilCardPr
         <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
           {council.members.length} {council.members.length === 1 ? 'member' : 'members'}
         </span>
-        {moderator && (
-          <span style={{ fontSize: '0.72rem', color: 'var(--gold)' }}>👑 {moderator.name}</span>
-        )}
+        {moderator && <span style={{ fontSize: '0.72rem', color: 'var(--gold)' }}>👑 {moderator.name}</span>}
       </div>
 
       {council.members.length > 0 && (
         <div className="avatar-row" style={{ marginTop: 12 }}>
           {council.members.map((m) => (
-            <div
-              key={m.id}
-              className="avatar sm"
-              style={{ background: m.avatarColor || '#818cf8' }}
-              title={m.name}
-            >
+            <div key={m.id} className="avatar sm" style={{ background: m.avatarColor || '#818cf8' }} title={m.name}>
               {m.name.slice(0, 2).toUpperCase()}
             </div>
           ))}

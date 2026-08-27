@@ -3,7 +3,12 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { AppError } from '../lib/errors.js'
-import { sessionConcludeSchema, sessionCreateSchema, sessionExtendSchema, sessionInterveneSchema } from '@opencouncil/shared'
+import {
+  sessionConcludeSchema,
+  sessionCreateSchema,
+  sessionExtendSchema,
+  sessionInterveneSchema,
+} from '@opencouncil/shared'
 import type { SessionBus } from '../engine/bus.js'
 import type { SessionManager } from '../engine/session-manager.js'
 import { logActivity, messageToDTO, sessionToDTO } from './mappers.js'
