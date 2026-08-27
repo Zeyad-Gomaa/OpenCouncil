@@ -48,7 +48,6 @@
     "test:watch": "vitest",
     "start": "node apps/server/dist/cli.js",
     "serve:api": "node apps/server/dist/index.js",
-    "prepack": "node scripts/prepare.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
