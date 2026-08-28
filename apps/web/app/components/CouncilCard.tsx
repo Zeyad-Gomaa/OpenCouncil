@@ -1,6 +1,6 @@
 'use client'
 
-import type { CouncilDTO } from '@opencouncil/shared'
+import { STRATEGY_LABELS, type CouncilDTO } from '@opencouncil/shared'
 
 interface CouncilCardProps {
   council: CouncilDTO
@@ -25,7 +25,7 @@ export default function CouncilCard({ council, onDelete, onEdit }: CouncilCardPr
       </div>
 
       <div className="council-meta">
-        <span className="protocol-badge">{council.strategy === 'debate' ? '⚔ Debate' : '↻ Round Robin'}</span>
+        <span className="protocol-badge">{STRATEGY_LABELS[council.strategy] || council.strategy}</span>
         <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
           {council.rounds} {council.rounds === 1 ? 'round' : 'rounds'}
         </span>
@@ -37,11 +37,16 @@ export default function CouncilCard({ council, onDelete, onEdit }: CouncilCardPr
 
       {council.members.length > 0 && (
         <div className="avatar-row" style={{ marginTop: 12 }}>
-          {council.members.map((m) => (
+          {council.members.slice(0, 8).map((m) => (
             <div key={m.id} className="avatar sm" style={{ background: m.avatarColor || '#818cf8' }} title={m.name}>
               {m.name.slice(0, 2).toUpperCase()}
             </div>
           ))}
+          {council.members.length > 8 && (
+            <span className="avatar-more" title={council.members.map((m) => m.name).join(', ')}>
+              +{council.members.length - 8}
+            </span>
+          )}
         </div>
       )}
 

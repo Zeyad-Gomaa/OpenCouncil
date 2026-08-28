@@ -35,6 +35,7 @@
 
   --gold: #f5d07a;
   --gold-dim: rgba(245, 208, 122, 0.1);
+  --brand-c: #c9a227;
 
   --radius-sm: 8px;
   --radius: 12px;
@@ -213,9 +214,10 @@ a:hover {
   border-radius: 8px;
   background: #fff;
   color: #000;
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.brand-mark svg {
+  display: block;
 }
 .sidebar-new {
   display: flex;
@@ -307,6 +309,7 @@ a:hover {
   min-width: 0;
   padding: 28px 40px 64px;
   max-width: 1080px;
+  overflow-x: hidden;
 }
 .main:has(.chat-hero),
 .main:has(.chamber) {
@@ -668,7 +671,10 @@ tbody tr:hover {
 }
 .avatar-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .avatar-row .avatar {
   margin-left: -6px;
@@ -676,6 +682,13 @@ tbody tr:hover {
 }
 .avatar-row .avatar:first-child {
   margin-left: 0;
+}
+.avatar-more {
+  margin-left: 6px;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  align-self: center;
 }
 
 .stat-row {
@@ -728,22 +741,28 @@ tbody tr:hover {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 3px;
   margin-bottom: 24px;
+  max-width: 100%;
   background: var(--bg-inset);
   border: 1px solid var(--border);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius);
+  overflow: visible;
 }
 .tabs button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 34px;
-  padding: 6px 14px;
+  padding: 6px 10px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-tertiary);
-  border-radius: var(--radius-full);
+  border-radius: calc(var(--radius) - 3px);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tabs button:hover:not(.primary) {
   color: var(--text-secondary);
@@ -890,6 +909,8 @@ label.catalog-row {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   animation: fadeInUp 0.3s ease both;
+  overflow: hidden;
+  min-width: 0;
 }
 .provider-card:hover,
 .model-card:hover,
@@ -927,6 +948,7 @@ label.catalog-row {
 }
 .provider-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 12px;
 }
@@ -1094,6 +1116,43 @@ label.catalog-row {
   padding: 10px 12px 0;
   font-size: 0.78rem;
 }
+.workspace-attach {
+  text-align: left;
+  margin-top: 14px;
+  padding: 14px 14px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.workspace-attach label {
+  margin-top: 0;
+}
+.workspace-attach-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.workspace-attach-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.attach-toggle.on {
+  color: var(--gold);
+  border-color: rgba(245, 208, 122, 0.35);
+}
+.workspace-chip {
+  display: inline-block;
+  max-width: min(420px, 50vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
 
 .council-picker {
   display: flex;
@@ -1191,6 +1250,7 @@ label.catalog-row {
 .chamber-status-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
 }
@@ -1206,6 +1266,8 @@ label.catalog-row {
   flex-wrap: wrap;
   gap: 8px;
   padding: 14px 0 6px;
+  max-height: 120px;
+  overflow-y: auto;
 }
 .member-pill {
   display: flex;
@@ -1253,6 +1315,47 @@ label.catalog-row {
   font-weight: 650;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+.round-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 18px 0 8px;
+  padding: 8px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  min-height: 0;
+}
+.round-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  border-color: transparent;
+}
+.round-collapsed {
+  padding: 8px 0 16px;
+  color: var(--text-quaternary);
+  font-size: 0.82rem;
+}
+.message-more {
+  margin-top: 8px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+.message-more:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
 }
 .message-bubble {
   display: flex;
@@ -1457,6 +1560,10 @@ label.catalog-row {
   color: var(--danger);
   margin-top: 10px;
   font-size: 0.85rem;
+}
+.form-error button {
+  margin-left: 8px;
+  vertical-align: baseline;
 }
 .notice {
   padding: 10px 14px;
@@ -1696,6 +1803,16 @@ body > svg .error-text {
   }
   .chamber-header {
     flex-direction: column;
+  }
+  .workspace-attach-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .workspace-chip {
+    max-width: 100%;
+  }
+  .tabs button {
+    flex: 1 1 calc(50% - 4px);
   }
   table {
     display: block;

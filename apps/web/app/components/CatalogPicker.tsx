@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Modal from './Modal'
-import { apiGet, apiSend } from '../lib/api'
+import { apiCatalog, apiSend } from '../lib/api'
 import type { ProviderCatalogDTO, ProviderDTO } from '@opencouncil/shared'
 
 function formatPrice(n: number | null | undefined): string {
@@ -33,6 +33,7 @@ export default function CatalogPicker({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [refresh, setRefresh] = useState(0)
 
   useEffect(() => {
     if (open) {
@@ -49,7 +50,7 @@ export default function CatalogPicker({
     setLoading(true)
     setCatalog(null)
     setError(null)
-    apiGet<ProviderCatalogDTO>(`/providers/${providerId}/catalog`)
+    apiCatalog<ProviderCatalogDTO>(providerId)
       .then((c) => {
         if (!cancelled) {
           setCatalog(c)
@@ -57,7 +58,14 @@ export default function CatalogPicker({
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setError(
+            /no such API route/i.test(msg)
+              ? `${msg} Restart the OpenCouncil process after updating, then pull again.`
+              : msg,
+          )
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -65,7 +73,7 @@ export default function CatalogPicker({
     return () => {
       cancelled = true
     }
-  }, [open, providerId])
+  }, [open, providerId, refresh])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -161,11 +169,22 @@ export default function CatalogPicker({
       </div>
 
       {catalog?.reason && <p className="notice">{catalog.reason}</p>}
-      {error && <p className="form-error">{error}</p>}
+      {error && (
+        <p className="form-error">
+          {error}{' '}
+          <button type="button" className="ghost sm" onClick={() => setRefresh((n) => n + 1)}>
+            Retry
+          </button>
+        </p>
+      )}
 
       <div className="catalog-list">
         {loading && <div className="catalog-empty">Fetching live models…</div>}
-        {!loading && filtered.length === 0 && <div className="catalog-empty">No models match.</div>}
+        {!loading && filtered.length === 0 && (
+          <div className="catalog-empty">
+            {error ? 'Could not load the catalog.' : catalog?.reason ? catalog.reason : 'No models match.'}
+          </div>
+        )}
         {!loading &&
           filtered.map((m) => (
             <label key={m.modelId} className={`catalog-row ${selected.has(m.modelId) ? 'selected' : ''}`}>

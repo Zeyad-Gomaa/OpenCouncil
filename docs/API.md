@@ -24,6 +24,8 @@ except `councils` (all) and `runningSessions` (`queued` or `running`).
 ### GET /meta/providers
 
 Supported protocols and one-click catalog presets for the settings UI.
+Council strategies: `debate`, `swarm`, `critique`, `round_robin`, `review`,
+`architect`, `red_team`.
 
 ## Providers
 
@@ -71,6 +73,9 @@ OpenAI-compatible providers are queried at `{baseUrl}/models`. Anthropic uses
 `/v1/models`, Google uses `/v1beta/models`. OpenRouter's catalog includes
 per-token prices, converted to USD per million tokens. For other hosts the
 OpenRouter public catalog is used as a pricing overlay when ids match.
+
+The settings UI prefers **POST /providers/:id/discover-models** (same body)
+so a static file server cannot intercept the GET.
 
 ### POST /providers/:id/catalog/enroll
 
@@ -164,10 +169,27 @@ Each council includes its member roster.
 ### POST /sessions
 
 ```json
-{ "councilId": "uuid", "topic": "Should we migrate to Postgres?" }
+{
+  "councilId": "uuid",
+  "topic": "Should we migrate to Postgres?",
+  "workspacePath": "/absolute/path/to/repo",
+  "workspaceFiles": ["src/app.ts"]
+}
 ```
 
+`workspacePath` is optional. When set, it must be an absolute folder (or file)
+this process can read. Members receive a tree briefing and may call `list_dir`,
+`read_file`, and `grep` inside that root. They cannot write.
+
 Returns `202 Session` and begins deliberation asynchronously.
+
+### POST /workspace/preview
+
+```json
+{ "path": "/absolute/path/to/repo", "files": ["src/app.ts"] }
+```
+
+Validates the path and returns `{ ok, root, files, tree, fileCount, preview }`.
 
 ### GET /sessions?status=running&councilId=&search=&createdAfter=&createdBefore=&cursor=&limit=50
 
@@ -184,11 +206,13 @@ Aborts in-flight LLM calls; status becomes `cancelled`.
 
 ### POST /sessions/:id/clone
 
-Creates and starts a new session using the original execution snapshot.
+Creates and starts a new session using the original execution snapshot,
+including any attached workspace.
 
 ### POST /sessions/:id/rerun
 
 Creates and starts a new session using the current council configuration.
+The attached workspace is copied onto the new session.
 
 ### GET /sessions/:id/export?format=json|jsonl|markdown
 

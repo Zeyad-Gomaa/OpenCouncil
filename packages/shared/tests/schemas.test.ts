@@ -31,4 +31,15 @@ describe('schemas', () => {
   it('session topic length enforced', () => {
     expect(() => sessionCreateSchema.parse({ councilId: '11111111-1111-4111-8111-111111111111', topic: '' })).toThrow()
   })
+
+  it('accepts an optional workspace on session create', () => {
+    const r = sessionCreateSchema.parse({
+      councilId: '11111111-1111-4111-8111-111111111111',
+      topic: 'Review this patch',
+      workspacePath: '/tmp/repo',
+      workspaceFiles: ['src/app.ts'],
+    })
+    expect(r.workspacePath).toBe('/tmp/repo')
+    expect(r.workspaceFiles).toEqual(['src/app.ts'])
+  })
 })

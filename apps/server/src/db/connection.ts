@@ -224,6 +224,68 @@ INSERT INTO council_members SELECT * FROM council_members_v4;
 DROP TABLE council_members_v4;
 `,
   },
+  {
+    version: 5,
+    name: 'council-strategies-swarm-critique',
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v5;
+ALTER TABLE councils RENAME TO councils_v5;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate','swarm','critique')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v5;
+DROP TABLE councils_v5;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v5;
+DROP TABLE council_members_v5;
+`,
+  },
+  {
+    version: 6,
+    name: 'council-strategies-coding',
+    sql: `
+ALTER TABLE council_members RENAME TO council_members_v6;
+ALTER TABLE councils RENAME TO councils_v6;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate','swarm','critique','review','architect','red_team')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v6;
+DROP TABLE councils_v6;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v6;
+DROP TABLE council_members_v6;
+`,
+  },
+  {
+    version: 7,
+    name: 'session-workspace',
+    sql: `
+ALTER TABLE sessions ADD COLUMN workspace_path TEXT;
+ALTER TABLE sessions ADD COLUMN workspace_files_json TEXT;
+`,
+  },
 ]
 
 export function migrate(db: DB): void {

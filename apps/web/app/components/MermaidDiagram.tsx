@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { cleanupMermaidDom, isMermaidErrorSvg, sanitizeMermaid } from '../lib/sanitizeMermaid'
 
 interface MermaidDiagramProps {
@@ -65,9 +65,25 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
   const [error, setError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [visible, setVisible] = useState(false)
+  const hostRef = useRef<HTMLDivElement>(null)
   const uniqueId = useId().replace(/[^a-zA-Z0-9]/g, '_')
 
   useEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) setVisible(true)
+      },
+      { rootMargin: '240px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
     let cancelled = false
     async function render() {
       setError(null)
@@ -110,7 +126,7 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
       cancelled = true
       cleanupMermaidDom()
     }
-  }, [chart, uniqueId])
+  }, [chart, uniqueId, visible])
 
   function handleCopy() {
     navigator.clipboard?.writeText(chart)
@@ -119,7 +135,7 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
   }
 
   return (
-    <div className="diagram-card">
+    <div className="diagram-card" ref={hostRef}>
       <div className="diagram-card-bar">
         <span className="diagram-card-label">Diagram</span>
         <div className="diagram-card-actions">
@@ -146,7 +162,7 @@ export default function MermaidDiagram({ chart }: MermaidDiagramProps) {
       ) : svg ? (
         <div className="diagram-svg" dangerouslySetInnerHTML={{ __html: svg }} />
       ) : (
-        <div className="diagram-loading">Rendering diagram…</div>
+        <div className="diagram-loading">{visible ? 'Rendering diagram…' : 'Diagram queued'}</div>
       )}
     </div>
   )

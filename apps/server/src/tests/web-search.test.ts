@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { formatSearchResults, parseDuckDuckGoHtml, searchWeb } from '../engine/web-search.js'
+import { formatResearchMarkdown, formatSearchResults, parseDuckDuckGoHtml, searchWeb } from '../engine/web-search.js'
 
 const DDG_HTML = `
 <div class="result__body">
@@ -106,5 +106,24 @@ describe('web search', () => {
     ])
     expect(formatted).toContain('=== LIVE WEB RESEARCH & SOURCES ===')
     expect(formatted).toContain('https://opencouncil.dev')
+  })
+
+  it('formatResearchMarkdown embeds images and video links', () => {
+    const md = formatResearchMarkdown({
+      web: [{ title: 'LLM', url: 'https://example.com/llm', snippet: 'A language model.' }],
+      images: [
+        {
+          title: 'Diagram',
+          url: 'https://en.wikipedia.org/wiki/LLM',
+          snippet: 'Diagram',
+          kind: 'image',
+          imageUrl: 'https://upload.wikimedia.org/example.jpg',
+        },
+      ],
+      videos: [{ title: 'Talk', url: 'https://www.youtube.com/watch?v=abc', snippet: 'Lecture', kind: 'video' }],
+    })
+    expect(md).toContain('[LLM](https://example.com/llm)')
+    expect(md).toContain('![Diagram](https://upload.wikimedia.org/example.jpg)')
+    expect(md).toContain('[Talk](https://www.youtube.com/watch?v=abc)')
   })
 })

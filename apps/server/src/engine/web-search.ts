@@ -4,6 +4,14 @@ export interface SearchResult {
   title: string
   url: string
   snippet: string
+  kind?: 'web' | 'image' | 'video'
+  imageUrl?: string
+}
+
+export interface ResearchPack {
+  web: SearchResult[]
+  images: SearchResult[]
+  videos: SearchResult[]
 }
 
 const USER_AGENT =
@@ -291,6 +299,8 @@ function stripHtml(html: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#x2F;/gi, '/')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
 }
@@ -302,4 +312,115 @@ export function formatSearchResults(results: SearchResult[]): string {
     results.map((r, i) => `[Source ${i + 1}]: "${r.title}"\nURL: ${r.url}\nSummary: ${r.snippet}`).join('\n\n') +
     `\n====================================`
   )
+}
+
+export function formatResearchMarkdown(pack: ResearchPack): string {
+  const parts: string[] = []
+  if (pack.web.length > 0) {
+    parts.push(
+      `**Live web research**\n\n` +
+        pack.web
+          .map((r, i) => {
+            const img = r.imageUrl ? `\n\n![${r.title}](${r.imageUrl})` : ''
+            return `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}${img}`
+          })
+          .join('\n\n'),
+    )
+  }
+  if (pack.images.length > 0) {
+    parts.push(
+      `**Images**\n\n` +
+        pack.images
+          .map((r) => {
+            const src = r.imageUrl || r.url
+            return `[![${r.title}](${src})](${r.url})`
+          })
+          .join('\n\n'),
+    )
+  }
+  if (pack.videos.length > 0) {
+    parts.push(
+      `**Videos**\n\n` +
+        pack.videos.map((r) => `- [${r.title}](${r.url})${r.snippet ? ` — ${r.snippet}` : ''}`).join('\n'),
+    )
+  }
+  return parts.join('\n\n')
+}
+
+export async function searchWikiImages(query: string, maxResults = 4, timeoutMs = 6000): Promise<SearchResult[]> {
+  const headers = { 'user-agent': USER_AGENT, accept: 'application/json' }
+  const wikiUrl =
+    `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}` +
+    `&gsrlimit=${Math.max(maxResults * 2, 8)}&prop=pageimages|info&inprop=url&piprop=thumbnail&pithumbsize=800&format=json`
+  const commonsUrl =
+    `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}` +
+    `&gsrlimit=${maxResults}&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json`
+
+  const [wikiRes, commonsRes] = await Promise.all([
+    fetchWithTimeout(wikiUrl, { headers }, timeoutMs).catch(() => null),
+    fetchWithTimeout(commonsUrl, { headers }, timeoutMs).catch(() => null),
+  ])
+
+  const out: SearchResult[] = []
+  if (wikiRes?.ok) {
+    const data = (await wikiRes.json()) as {
+      query?: {
+        pages?: Record<
+          string,
+          { title?: string; fullurl?: string; canonicalurl?: string; thumbnail?: { source?: string } }
+        >
+      }
+    }
+    for (const p of Object.values(data.query?.pages ?? {})) {
+      if (!p.thumbnail?.source) continue
+      out.push({
+        title: p.title || 'Image',
+        url:
+          p.fullurl ||
+          p.canonicalurl ||
+          `https://en.wikipedia.org/wiki/${encodeURIComponent((p.title || '').replace(/ /g, '_'))}`,
+        snippet: p.title || '',
+        kind: 'image',
+        imageUrl: p.thumbnail.source,
+      })
+    }
+  }
+  if (out.length < maxResults && commonsRes?.ok) {
+    const data = (await commonsRes.json()) as {
+      query?: { pages?: Record<string, { title?: string; imageinfo?: Array<{ url?: string; thumburl?: string }> }> }
+    }
+    for (const p of Object.values(data.query?.pages ?? {})) {
+      const info = p.imageinfo?.[0]
+      const src = info?.thumburl || info?.url
+      if (!src) continue
+      out.push({
+        title: (p.title || 'Image').replace(/^File:/, ''),
+        url: src,
+        snippet: p.title || '',
+        kind: 'image',
+        imageUrl: src,
+      })
+    }
+  }
+  const seen = new Set<string>()
+  return out
+    .filter((r) => {
+      if (!r.imageUrl || seen.has(r.imageUrl)) return false
+      seen.add(r.imageUrl)
+      return true
+    })
+    .slice(0, maxResults)
+}
+
+export async function researchTopic(query: string, timeoutMs = 8000): Promise<ResearchPack> {
+  const cleanQuery = query.trim().slice(0, 400)
+  if (!cleanQuery) return { web: [], images: [], videos: [] }
+  const [web, images, videos] = await Promise.all([
+    searchWeb(cleanQuery, 5, timeoutMs).catch(() => [] as SearchResult[]),
+    searchWikiImages(cleanQuery, 4, timeoutMs).catch(() => [] as SearchResult[]),
+    searchDuckDuckGo(`${cleanQuery} site:youtube.com`, 3, timeoutMs)
+      .then((rows) => rows.map((r) => ({ ...r, kind: 'video' as const })))
+      .catch(() => [] as SearchResult[]),
+  ])
+  return { web, images, videos }
 }

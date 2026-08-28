@@ -41,7 +41,7 @@ export const mockAdapter: ProviderAdapter = {
     const systemMsg = opts.messages.find((m) => m.role === 'system')?.content ?? ''
     const lastUser = [...opts.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
     const persona = systemMsg.split('—')[0]?.trim() || 'Member'
-    const isSynthesis = /synthes/i.test(systemMsg)
+    const isSynthesis = /you are the moderator of an ai council/i.test(systemMsg) || /\bsynthesize\b/i.test(systemMsg)
 
     let text: string
     if (isSynthesis) {
@@ -58,6 +58,16 @@ export const mockAdapter: ProviderAdapter = {
         `${opener}, ${persona.toLowerCase()} holds that ${opts.modelId} ` +
         `approaches "${lastUser.slice(0, 80)}" with a structured plan: define the objective, ` +
         `enumerate constraints, then commit to the highest-leverage first move while keeping retreat options open.`
+      const joined = opts.messages.map((m) => m.content).join('\n')
+      const urls = [...joined.matchAll(/https?:\/\/[^\s)\]>]+/g)].map((m) => m[0])
+      const unique = [...new Set(urls)].slice(0, 3)
+      if (unique.length > 0) {
+        text += `\n\nGrounded in live sources:\n` + unique.map((u, i) => `${i + 1}. [${u}](${u})`).join('\n')
+      }
+      const imgs = [...joined.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)].map((m) => m[1]!).slice(0, 2)
+      if (imgs.length > 0) {
+        text += `\n\n` + imgs.map((src, i) => `![Source image ${i + 1}](${src})`).join('\n')
+      }
     }
 
     return {

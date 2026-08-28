@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { apiGet, apiSend } from '../../lib/api'
@@ -51,6 +51,7 @@ function ChamberContent() {
   const [interventionText, setInterventionText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
+  const [expandedRounds, setExpandedRounds] = useState<Record<number, boolean>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
 
@@ -188,7 +189,10 @@ function ChamberContent() {
   }, [sessionId, mergeMessage])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const node = bottomRef.current
+    if (!node) return
+    const rect = node.getBoundingClientRect()
+    if (rect.top < window.innerHeight + 360) node.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages.length])
 
   async function handleCancel() {
@@ -284,6 +288,11 @@ function ChamberContent() {
           <div className="chamber-status-row">
             <span className={`badge ${session.status}`}>{session.status}</span>
             {running && currentRound > 0 && <span className="muted">Round {currentRound}</span>}
+            {session.workspacePath && (
+              <span className="workspace-chip" title={session.workspacePath}>
+                {session.workspacePath}
+              </span>
+            )}
           </div>
         </div>
 
@@ -344,48 +353,46 @@ function ChamberContent() {
           </div>
         )}
 
-        {rounds.map((round) => (
-          <div key={round}>
-            <div className="round-label">{round === 0 ? 'Question & research' : `Round ${round}`}</div>
-            {discussion
-              .filter((m) => m.round === round)
-              .map((m) => {
-                const isWeb = m.memberName === 'Web Search'
-                const isUser = m.kind === 'user'
-                const color = isWeb
-                  ? '#7dd3fc'
-                  : isUser
-                    ? 'var(--text)'
-                    : memberColors[m.memberId || ''] || 'var(--text-secondary)'
-                const initials = isWeb ? 'W' : isUser ? 'Y' : (m.memberName || '??').slice(0, 2).toUpperCase()
-
-                return (
-                  <div key={m.id} className={`message-bubble ${isUser ? 'user' : ''} ${isWeb ? 'web' : ''}`}>
-                    <div
-                      className="avatar"
-                      style={{
-                        background: isWeb ? 'rgba(125, 211, 252, 0.12)' : isUser ? '#262626' : color,
-                        color: isWeb ? '#7dd3fc' : '#fff',
-                      }}
-                    >
-                      {initials}
-                    </div>
-                    <div className="message-body">
-                      <div className="message-header">
-                        <span className="message-sender" style={{ color: isUser ? 'var(--text)' : color }}>
-                          {isUser ? 'You' : m.memberName || 'Member'}
-                        </span>
-                        <MessageMeta m={m} />
-                      </div>
-                      <div className="message-content">
-                        <MarkdownRenderer content={m.content} />
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-          </div>
-        ))}
+        {rounds.map((round) => {
+          const roundMessages = discussion.filter((m) => m.round === round)
+          const defaultOpen = round === 0 || round === currentRound
+          const open = expandedRounds[round] ?? defaultOpen
+          const label = round === 0 ? 'Question & research' : `Round ${round}`
+          return (
+            <div key={round}>
+              <button
+                type="button"
+                className="round-toggle"
+                onClick={() => setExpandedRounds((prev) => ({ ...prev, [round]: !open }))}
+              >
+                <span>{label}</span>
+                <span>
+                  {roundMessages.length} {roundMessages.length === 1 ? 'message' : 'messages'} ·{' '}
+                  {open ? 'Hide' : 'Show'}
+                </span>
+              </button>
+              {open ? (
+                roundMessages.map((m) => (
+                  <MessageBubble
+                    key={m.id}
+                    m={m}
+                    color={
+                      m.memberName === 'Web Search'
+                        ? '#7dd3fc'
+                        : m.memberName === 'Workspace'
+                          ? 'var(--gold)'
+                          : m.kind === 'user'
+                            ? 'var(--text)'
+                            : memberColors[m.memberId || ''] || 'var(--text-secondary)'
+                    }
+                  />
+                ))
+              ) : (
+                <div className="round-collapsed">Collapsed to keep this session light.</div>
+              )}
+            </div>
+          )
+        })}
 
         {running && (
           <div className="typing-indicator">
@@ -469,3 +476,49 @@ function MessageMeta({ m }: { m: MessageDTO }) {
     </span>
   )
 }
+
+const MessageBubble = React.memo(function MessageBubble({ m, color }: { m: MessageDTO; color: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const isWeb = m.memberName === 'Web Search'
+  const isWorkspace = m.memberName === 'Workspace'
+  const isUser = m.kind === 'user'
+  const initials = isWeb ? 'W' : isWorkspace ? 'WS' : isUser ? 'Y' : (m.memberName || '??').slice(0, 2).toUpperCase()
+  const long = m.content.length > 1800
+  const body = long && !expanded ? `${m.content.slice(0, 1400)}…` : m.content
+
+  return (
+    <div className={`message-bubble ${isUser ? 'user' : ''} ${isWeb ? 'web' : ''} ${isWorkspace ? 'workspace' : ''}`}>
+      <div
+        className="avatar"
+        style={{
+          background: isWeb
+            ? 'rgba(125, 211, 252, 0.12)'
+            : isWorkspace
+              ? 'var(--gold-dim)'
+              : isUser
+                ? '#262626'
+                : color,
+          color: isWeb ? '#7dd3fc' : isWorkspace ? 'var(--gold)' : '#fff',
+        }}
+      >
+        {initials}
+      </div>
+      <div className="message-body">
+        <div className="message-header">
+          <span className="message-sender" style={{ color: isUser ? 'var(--text)' : color }}>
+            {isUser ? 'You' : m.memberName || 'Member'}
+          </span>
+          <MessageMeta m={m} />
+        </div>
+        <div className="message-content">
+          <MarkdownRenderer content={body} />
+        </div>
+        {long && (
+          <button type="button" className="message-more" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? 'Show less' : 'Show full message'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+})

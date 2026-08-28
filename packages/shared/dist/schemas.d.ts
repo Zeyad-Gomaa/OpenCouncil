@@ -150,38 +150,38 @@ export declare const memberUpdateSchema: z.ZodObject<{
     maxTokens?: number | null | undefined;
     avatarColor?: string | undefined;
 }>;
-export declare const strategyKindSchema: z.ZodEnum<["round_robin", "debate"]>;
+export declare const strategyKindSchema: z.ZodEnum<["round_robin", "debate", "swarm", "critique", "review", "architect", "red_team"]>;
 export declare const councilCreateSchema: z.ZodEffects<z.ZodObject<{
     name: z.ZodString;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    strategy: z.ZodEnum<["round_robin", "debate"]>;
+    strategy: z.ZodEnum<["round_robin", "debate", "swarm", "critique", "review", "architect", "red_team"]>;
     rounds: z.ZodNumber;
     memberIds: z.ZodArray<z.ZodString, "many">;
     moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     name: string;
-    strategy: "round_robin" | "debate";
+    strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
     memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name: string;
-    strategy: "round_robin" | "debate";
+    strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
     memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }>, {
     name: string;
-    strategy: "round_robin" | "debate";
+    strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
     memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name: string;
-    strategy: "round_robin" | "debate";
+    strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
     memberIds: string[];
     description?: string | null | undefined;
@@ -190,35 +190,35 @@ export declare const councilCreateSchema: z.ZodEffects<z.ZodObject<{
 export declare const councilUpdateSchema: z.ZodEffects<z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    strategy: z.ZodOptional<z.ZodEnum<["round_robin", "debate"]>>;
+    strategy: z.ZodOptional<z.ZodEnum<["round_robin", "debate", "swarm", "critique", "review", "architect", "red_team"]>>;
     rounds: z.ZodOptional<z.ZodNumber>;
     memberIds: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     name?: string | undefined;
     description?: string | null | undefined;
-    strategy?: "round_robin" | "debate" | undefined;
+    strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
     memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name?: string | undefined;
     description?: string | null | undefined;
-    strategy?: "round_robin" | "debate" | undefined;
+    strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
     memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }>, {
     name?: string | undefined;
     description?: string | null | undefined;
-    strategy?: "round_robin" | "debate" | undefined;
+    strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
     memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name?: string | undefined;
     description?: string | null | undefined;
-    strategy?: "round_robin" | "debate" | undefined;
+    strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
     memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
@@ -226,12 +226,28 @@ export declare const councilUpdateSchema: z.ZodEffects<z.ZodObject<{
 export declare const sessionCreateSchema: z.ZodObject<{
     councilId: z.ZodString;
     topic: z.ZodString;
+    workspacePath: z.ZodOptional<z.ZodString>;
+    workspaceFiles: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
 }, "strip", z.ZodTypeAny, {
     councilId: string;
     topic: string;
+    workspacePath?: string | undefined;
+    workspaceFiles?: string[] | undefined;
 }, {
     councilId: string;
     topic: string;
+    workspacePath?: string | undefined;
+    workspaceFiles?: string[] | undefined;
+}>;
+export declare const workspacePreviewSchema: z.ZodObject<{
+    path: z.ZodString;
+    files: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+}, "strip", z.ZodTypeAny, {
+    path: string;
+    files?: string[] | undefined;
+}, {
+    path: string;
+    files?: string[] | undefined;
 }>;
 export declare const sessionExtendSchema: z.ZodObject<{
     additionalRounds: z.ZodDefault<z.ZodNumber>;
@@ -344,7 +360,7 @@ export declare const configImportSchema: z.ZodObject<{
         id: z.ZodString;
         name: z.ZodString;
         description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        strategy: z.ZodOptional<z.ZodEnum<["round_robin", "debate"]>>;
+        strategy: z.ZodOptional<z.ZodEnum<["round_robin", "debate", "swarm", "critique", "review", "architect", "red_team"]>>;
         rounds: z.ZodOptional<z.ZodNumber>;
         memberIds: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
@@ -352,7 +368,7 @@ export declare const configImportSchema: z.ZodObject<{
         name: string;
         id: string;
         description?: string | null | undefined;
-        strategy?: "round_robin" | "debate" | undefined;
+        strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
         memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
@@ -360,7 +376,7 @@ export declare const configImportSchema: z.ZodObject<{
         name: string;
         id: string;
         description?: string | null | undefined;
-        strategy?: "round_robin" | "debate" | undefined;
+        strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
         memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
@@ -398,7 +414,7 @@ export declare const configImportSchema: z.ZodObject<{
         name: string;
         id: string;
         description?: string | null | undefined;
-        strategy?: "round_robin" | "debate" | undefined;
+        strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
         memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
@@ -437,7 +453,7 @@ export declare const configImportSchema: z.ZodObject<{
         name: string;
         id: string;
         description?: string | null | undefined;
-        strategy?: "round_robin" | "debate" | undefined;
+        strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
         memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;

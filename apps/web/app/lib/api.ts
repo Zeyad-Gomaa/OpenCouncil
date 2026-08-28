@@ -20,7 +20,8 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  return handle<T>(await fetch(`${API}${path}`, { cache: 'no-store' }))
+  const url = `${API}${path}`.replace(/\/+$/, '')
+  return handle<T>(await fetch(url, { cache: 'no-store' }))
 }
 
 export async function apiSend<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<T> {
@@ -31,4 +32,17 @@ export async function apiSend<T>(path: string, method: 'POST' | 'PATCH' | 'DELET
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
   )
+}
+
+/** Live provider catalog. POST first so a static GET catch-all cannot swallow it. */
+export async function apiCatalog<T>(providerId: string): Promise<T> {
+  try {
+    return await apiSend<T>(`/providers/${providerId}/discover-models`, 'POST')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/no such API route/i.test(msg)) {
+      return await apiGet<T>(`/providers/${providerId}/catalog`)
+    }
+    throw err
+  }
 }

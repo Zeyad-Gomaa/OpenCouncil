@@ -7,7 +7,7 @@ interface MarkdownRendererProps {
   content: string
 }
 
-export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
+function MarkdownRenderer({ content }: MarkdownRendererProps) {
   if (!content) return null
 
   // 1. Tokenize blocks: code blocks vs markdown paragraphs/tables/lists
@@ -424,3 +424,5 @@ function parseBlocks(md: string): Block[] {
 
   return blocks
 }
+
+export default React.memo(MarkdownRenderer)

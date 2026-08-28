@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { apiGet, apiSend } from '../lib/api'
+import { apiCatalog, apiGet, apiSend } from '../lib/api'
 import Modal from '../components/Modal'
 import ProviderCard from '../components/ProviderCard'
 import ModelCard from '../components/ModelCard'
@@ -157,11 +157,14 @@ function ProvidersTab({
 
       if (editId) {
         await apiSend(`/providers/${editId}`, 'PATCH', payload)
+        setOpen(false)
+        reload()
       } else {
-        await apiSend('/providers', 'POST', payload)
+        const created = await apiSend<ProviderDTO>('/providers', 'POST', payload)
+        setOpen(false)
+        reload()
+        if (created.protocol !== 'mock') setPullFor(created.id)
       }
-      setOpen(false)
-      reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -402,12 +405,18 @@ function ModelsTab({
     }
     let cancelled = false
     setCatalogLoading(true)
-    apiGet<ProviderCatalogDTO>(`/providers/${providerId}/catalog`)
+    apiCatalog<ProviderCatalogDTO>(providerId)
       .then((c) => {
         if (!cancelled) setCatalog(c)
       })
-      .catch(() => {
-        if (!cancelled) setCatalog(null)
+      .catch((e) => {
+        if (!cancelled)
+          setCatalog({
+            supported: false,
+            source: '',
+            reason: e instanceof Error ? e.message : String(e),
+            models: [],
+          })
       })
       .finally(() => {
         if (!cancelled) setCatalogLoading(false)
@@ -882,9 +891,19 @@ function CouncilsTab({
           <div>
             <label>Strategy</label>
             <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKind)}>
-              <option value="debate">⚔ Debate (Chatroom roundtable)</option>
-              <option value="round_robin">↻ Round Robin (Parallel takes)</option>
+              <optgroup label="General">
+                <option value="debate">Debate — sequential roundtable</option>
+                <option value="swarm">Swarm — parallel, shared memory</option>
+                <option value="critique">Critique — independent takes, then review</option>
+                <option value="round_robin">Round robin — independent parallel takes</option>
+              </optgroup>
+              <optgroup label="Coding decisions">
+                <option value="review">Code review — bugs, tests, API, ship/no-ship</option>
+                <option value="architect">Architecture — sequential design, then refine</option>
+                <option value="red_team">Red team — break the approach</option>
+              </optgroup>
             </select>
+            <div className="input-hint">Code review, architecture, and red team are built for shipping decisions.</div>
           </div>
           <div>
             <label>Rounds (1–100)</label>

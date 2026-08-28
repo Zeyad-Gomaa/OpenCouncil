@@ -8,7 +8,8 @@ import { Semaphore, withRetry } from './execution-policy.js'
 import { AuthError, ProviderHttpError, RateLimitError, TimeoutError } from '../lib/http.js'
 import { buildSynthesisMessages } from './moderator.js'
 import { getStrategy } from './strategies.js'
-import { formatSearchResults, searchWeb } from './web-search.js'
+import { formatResearchMarkdown, researchTopic } from './web-search.js'
+import { WORKSPACE_TOOL_PROMPT, buildWorkspaceBriefing, parseToolCalls, runTool, stripToolBlocks } from './workspace.js'
 import type { SessionBus } from './bus.js'
 
 export interface TranscriptEntry {
@@ -81,6 +82,7 @@ export interface RunnerDeps {
     outputPerMTokUsd: number | null
   } | null
   updateSessionStatus(sessionId: string, status: 'running' | 'completed' | 'failed' | 'cancelled', error?: string): void
+  loadWorkspace?(sessionId: string): { root: string; files: string[] } | null
 }
 
 const CALL_TIMEOUT_MS = 120_000
@@ -100,7 +102,9 @@ function computeCost(
 
 /** Web research and mid-session user directives, even when the strategy hides peer transcript. */
 export function extraGroundingFromTranscript(transcript: TranscriptEntry[]): TranscriptEntry[] {
-  return transcript.filter((e) => e.memberId === 'system_web' || e.memberId === 'user')
+  return transcript.filter(
+    (e) => e.memberId === 'system_web' || e.memberId === 'user' || e.memberId === 'system_workspace',
+  )
 }
 
 export function formatTranscriptForMember(
@@ -115,6 +119,9 @@ export function formatTranscriptForMember(
       }
       if (e.memberId === 'system_web') {
         return `[WEB SEARCH EVIDENCE in Round ${e.round}]:\n${e.content}`
+      }
+      if (e.memberId === 'system_workspace') {
+        return `[WORKSPACE in Round ${e.round}]:\n${e.content}`
       }
       const isSelf = e.memberId === currentMemberId
       if (isSelf) {
@@ -189,16 +196,16 @@ export class SessionRunner {
       const strategy = getStrategy(council.strategy)
       const transcript: TranscriptEntry[] = []
 
-      // 1. Automatic live web research grounding
+      // 1. Automatic live web research grounding (pages, images, videos)
       try {
-        const searchResults = await searchWeb(topic, 5, 6000)
-        if (searchResults.length > 0) {
-          const webFormatted = formatSearchResults(searchResults)
+        const pack = await researchTopic(topic, 7000)
+        const md = formatResearchMarkdown(pack)
+        if (md) {
           transcript.push({
             speaker: 'Web Research',
             memberId: 'system_web',
             round: 0,
-            content: webFormatted,
+            content: md,
           })
           const searchMsgId = this.deps.insertMessage({
             sessionId,
@@ -207,7 +214,7 @@ export class SessionRunner {
             kind: 'system',
             round: 0,
             roundPosition: 1,
-            content: `**Live web research**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+            content: md,
           })
           bus.publish({
             type: 'message.created',
@@ -220,7 +227,7 @@ export class SessionRunner {
               role: 'assistant',
               kind: 'system',
               round: 0,
-              content: `**Live web research**\n\n${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}`,
+              content: md,
               createdAt: new Date().toISOString(),
             },
           })
@@ -255,6 +262,53 @@ export class SessionRunner {
         /* search is non-blocking */
       }
 
+      const workspace = this.deps.loadWorkspace?.(sessionId) ?? null
+      if (workspace?.root) {
+        try {
+          const brief = buildWorkspaceBriefing(workspace)
+          transcript.push({
+            speaker: 'Workspace',
+            memberId: 'system_workspace',
+            round: 0,
+            content: brief,
+          })
+          const wsId = this.deps.insertMessage({
+            sessionId,
+            memberId: null,
+            memberName: 'Workspace',
+            kind: 'system',
+            round: 0,
+            roundPosition: 2,
+            content: `**Attached workspace** \`${workspace.root}\`\n\nAgents can list, read, and search these files.\n\n\`\`\`\n${brief.slice(0, 6000)}\n\`\`\``,
+          })
+          bus.publish({
+            type: 'message.created',
+            sessionId,
+            message: {
+              id: String(wsId),
+              sessionId,
+              memberId: null,
+              memberName: 'Workspace',
+              role: 'assistant',
+              kind: 'system',
+              round: 0,
+              content: `**Attached workspace** \`${workspace.root}\`\n\nAgents can list, read, and search these files.`,
+              createdAt: new Date().toISOString(),
+            },
+          })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          this.deps.insertMessage({
+            sessionId,
+            memberId: null,
+            memberName: 'Workspace',
+            kind: 'system',
+            round: 0,
+            content: `Workspace could not be attached: ${msg}`,
+          })
+        }
+      }
+
       let roundNum = 0
       let totalPlannedRounds = council.rounds
 
@@ -282,8 +336,8 @@ export class SessionRunner {
         bus.publish({ type: 'round.started', sessionId, round: roundNum })
         const memberIds = activeMembers.map((m) => m.id)
 
-        if (council.strategy === 'debate') {
-          // In debate mode, run turns in conversational sequence so peers react to earlier speakers in this round
+        if (!strategy.parallel) {
+          // Sequential (debate): later speakers in the same round can rebut earlier ones
           for (let i = 0; i < memberIds.length; i++) {
             const memberId = memberIds[i]!
             const member = activeMembers.find((m) => m.id === memberId)
@@ -313,10 +367,13 @@ export class SessionRunner {
               i,
               strategy.includeTranscript(roundNum) || transcript.length > 0,
               signal,
+              false,
+              strategy.promptAddon,
+              workspace?.root,
             )
           }
         } else {
-          // Round-robin mode: run initial takes concurrently within the round
+          // Parallel (round robin / swarm / critique): members speak concurrently
           await Promise.all(
             memberIds.map(async (memberId, i) => {
               const member = activeMembers.find((m) => m.id === memberId)
@@ -330,6 +387,9 @@ export class SessionRunner {
                 i,
                 strategy.includeTranscript(roundNum),
                 signal,
+                false,
+                strategy.promptAddon,
+                workspace?.root,
               )
             }),
           )
@@ -379,6 +439,8 @@ export class SessionRunner {
     includeTranscript: boolean,
     signal: AbortSignal,
     isSynthesis = false,
+    promptAddon?: string,
+    workspaceRoot?: string,
   ): Promise<void> {
     const { bus } = this.deps
     bus.publish({
@@ -417,9 +479,11 @@ export class SessionRunner {
           `2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.\n` +
           `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
           `4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.\n` +
-          `5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.\n` +
+          `5. WEB EVIDENCE & CITATIONS: Cite live links from the research briefing as [Title](url). When an image URL is provided, embed it with ![caption](url). Include video links when they help.\n` +
           `6. DIAGRAMS: Prefer a simple \`\`\`mermaid flowchart TD\`\`\` when a picture helps. Node IDs must be alphanumeric (no spaces) — put labels in brackets: Foo[Label with spaces]. Never use the reserved word "end" as a node id. Use <br/> not <br>. Skip a diagram if the syntax would be unclear.\n` +
-          `7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`,
+          `7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.` +
+          (promptAddon ? `\n\n${promptAddon}` : '') +
+          (workspaceRoot ? `\n\n${WORKSPACE_TOOL_PROMPT}` : ''),
       )
 
       messages.push({ role: 'system', content: systemPromptParts.join('\n') })
@@ -448,34 +512,53 @@ export class SessionRunner {
       messages.push({ role: 'user', content: topic })
     }
 
-    const boundedMessages = fitMessages(messages, {
+    const budget = {
       contextWindow: model.contextWindow,
       responseTokens: member.maxTokens ?? 1024,
       safetyMargin: 128,
-    })
+    }
     const adapter = getAdapter(model.providerProtocol)
     const started = Date.now()
     try {
       const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(2)
       this.providerLimits.set(model.providerId, semaphore)
-      const attempted = await withRetry(
-        () =>
-          semaphore.run(() =>
-            adapter.chat({
-              baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? '',
-              apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : undefined,
-              modelId: model.modelId,
-              messages: boundedMessages,
-              temperature: member.temperature,
-              maxTokens: member.maxTokens ?? undefined,
-              timeoutMs: CALL_TIMEOUT_MS,
-              signal,
-            }),
-          ),
-        undefined,
+      const chatBase = {
+        baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? '',
+        apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : undefined,
+        modelId: model.modelId,
+        temperature: member.temperature,
+        maxTokens: member.maxTokens ?? undefined,
+        timeoutMs: CALL_TIMEOUT_MS,
         signal,
-      )
-      const result = attempted.value
+      }
+      let promptTokens = 0
+      let completionTokens = 0
+      let retryCount = 0
+      let text = ''
+      const working = [...messages]
+      const maxHops = workspaceRoot && !isSynthesis ? 4 : 0
+      for (let hop = 0; hop <= maxHops; hop++) {
+        const bounded = fitMessages(working, budget)
+        const attempted = await withRetry(
+          () => semaphore.run(() => adapter.chat({ ...chatBase, messages: bounded })),
+          undefined,
+          signal,
+        )
+        retryCount += attempted.retryCount
+        promptTokens += attempted.value.promptTokens ?? 0
+        completionTokens += attempted.value.completionTokens ?? 0
+        text = attempted.value.text
+        const tools = workspaceRoot && !isSynthesis ? parseToolCalls(text) : []
+        if (!workspaceRoot || !tools.length) break
+        const toolOut = tools.map((t) => runTool(workspaceRoot, t)).join('\n\n')
+        working.push({ role: 'assistant', content: text })
+        working.push({
+          role: 'user',
+          content: `TOOL RESULTS:\n${toolOut}\n\nContinue your council turn. If you have enough, reply without a tool block.`,
+        })
+      }
+      text = stripToolBlocks(text) || text
+      const result = { text, promptTokens, completionTokens }
 
       const latency = Date.now() - started
       const cost = computeCost(
@@ -531,7 +614,7 @@ export class SessionRunner {
         completionTokens: result.completionTokens ?? 0,
         costUsd: cost,
         latencyMs: latency,
-        retryCount: attempted.retryCount,
+        retryCount,
         status: 'ok',
       })
       bus.publish({
@@ -551,7 +634,7 @@ export class SessionRunner {
           totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0),
           costUsd: cost,
           latencyMs: latency,
-          retryCount: attempted.retryCount,
+          retryCount,
           errorCode: null,
           status: 'ok',
           createdAt: new Date().toISOString(),

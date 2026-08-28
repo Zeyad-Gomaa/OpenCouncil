@@ -56,7 +56,17 @@ export interface MemberDTO {
   providerName?: string | null
 }
 
-export type StrategyKind = 'round_robin' | 'debate'
+export type StrategyKind = 'round_robin' | 'debate' | 'swarm' | 'critique' | 'review' | 'architect' | 'red_team'
+
+export const STRATEGY_LABELS: Record<StrategyKind, string> = {
+  debate: 'Debate',
+  round_robin: 'Round robin',
+  swarm: 'Swarm',
+  critique: 'Critique',
+  review: 'Code review',
+  architect: 'Architecture',
+  red_team: 'Red team',
+}
 
 export interface CouncilDTO {
   id: string
@@ -121,6 +131,8 @@ export interface SessionDTO {
   completedAt: string | null
   messageCount?: number
   moderatorMemberId?: string | null
+  workspacePath?: string | null
+  workspaceFiles?: string[]
   createdAt: string
 }
 

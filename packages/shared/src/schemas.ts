@@ -52,7 +52,15 @@ export const memberCreateSchema = z.object({
 
 export const memberUpdateSchema = memberCreateSchema.partial()
 
-export const strategyKindSchema = z.enum(['round_robin', 'debate'])
+export const strategyKindSchema = z.enum([
+  'round_robin',
+  'debate',
+  'swarm',
+  'critique',
+  'review',
+  'architect',
+  'red_team',
+])
 
 export const councilCreateSchema = z
   .object({
@@ -83,6 +91,13 @@ export const councilUpdateSchema = z
 export const sessionCreateSchema = z.object({
   councilId: z.string().uuid(),
   topic: z.string().min(1).max(8_000),
+  workspacePath: z.string().min(1).max(4_000).optional(),
+  workspaceFiles: z.array(z.string().min(1).max(1_000)).max(80).optional(),
+})
+
+export const workspacePreviewSchema = z.object({
+  path: z.string().min(1).max(4_000),
+  files: z.array(z.string().min(1).max(1_000)).max(80).optional(),
 })
 
 export const sessionExtendSchema = z.object({

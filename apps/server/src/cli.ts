@@ -5,7 +5,7 @@
  * root, whether from a source checkout or a global/git npm install.
  */
 import path from 'node:path'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { encryptSecret } from './vault/crypto.js'
@@ -404,6 +404,7 @@ async function runLocalCouncil(args: Args, db: DB): Promise<void> {
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace,
   })
   const unsubscribe = bus.subscribe(sessionId, (event) => console.log(JSON.stringify(event)))
   try {
@@ -506,74 +507,18 @@ export async function main(): Promise<void> {
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace,
   })
   const sessions = new SessionManager(bus, runner)
 
   const app = await buildApp({ config, db, bus, sessions })
 
-  // ---- Chamber UI: prebuilt static export served by this process ----
-  let uiReady = false
-  if (existsSync(webOutDir)) {
-    const staticHandler = (await import('@fastify/static')).default
-    await app.register(staticHandler, {
-      root: webOutDir,
-      prefix: '/',
-      wildcard: true,
-      index: ['index.html'],
-    })
-
-    // SPA and HTML route resolver for clean Next.js export routes
-    app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api/') || req.url === '/api') {
-        reply.status(404).send({ error: { code: 'not_found', message: 'no such API route' } })
-        return
-      }
-      const rawPath = req.url.split('?')[0] || '/'
-      const urlPath = decodeURIComponent(rawPath)
-
-      // 1. Direct file candidate
-      const fileCandidate = path.join(webOutDir, urlPath)
-      if (existsSync(fileCandidate) && statSync(fileCandidate).isFile()) {
-        reply.sendFile(path.relative(webOutDir, fileCandidate))
-        return
-      }
-
-      // 2. Directory index.html candidate (e.g. /sessions/view/ -> /sessions/view/index.html)
-      const dirIndexCandidate = path.join(webOutDir, urlPath, 'index.html')
-      if (existsSync(dirIndexCandidate)) {
-        reply.type('text/html; charset=utf-8').send(createReadStream(dirIndexCandidate))
-        return
-      }
-
-      // 3. Named html candidate (e.g. /sessions -> /sessions.html or /sessions/index.html)
-      const htmlCandidate = path.join(webOutDir, `${urlPath}.html`)
-      if (existsSync(htmlCandidate)) {
-        reply.type('text/html; charset=utf-8').send(createReadStream(htmlCandidate))
-        return
-      }
-
-      // 4. Root index.html fallback for client-side routing
-      const rootIndex = path.join(webOutDir, 'index.html')
-      if (existsSync(rootIndex)) {
-        reply.type('text/html; charset=utf-8').send(createReadStream(rootIndex))
-        return
-      }
-
-      const fallback = path.join(webOutDir, '404.html')
-      if (existsSync(fallback)) {
-        reply.status(404).type('text/html; charset=utf-8').send(createReadStream(fallback))
-      } else {
-        reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
-      }
-    })
-    uiReady = true
-  } else {
+  const { registerWebUi } = await import('./web-ui.js')
+  const uiReady = await registerWebUi(app, webOutDir)
+  if (!uiReady) {
     console.warn(
       `[opencouncil] UI not found at ${webOutDir}. ` + `Build it with \`npm run build\`. API remains served.`,
     )
-    app.setNotFoundHandler((_req, reply) => {
-      reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
-    })
   }
 
   await app.listen({ host: config.host, port: config.port })

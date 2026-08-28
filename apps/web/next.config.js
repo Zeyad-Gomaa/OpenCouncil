@@ -23,6 +23,13 @@ module.exports = (phase) => {
     // does not rebuild Next.js. A random build id would make every rebuild a
     // spurious diff, so tie it to the release instead.
     generateBuildId: async () => `v${version}`,
+    webpack: (config) => {
+      config.resolve.extensionAlias = {
+        ...(config.resolve.extensionAlias ?? {}),
+        '.js': ['.ts', '.tsx', '.js'],
+      }
+      return config
+    },
     ...(isDev
       ? {
           // `trailingSlash` would otherwise redirect /api/v1/health to

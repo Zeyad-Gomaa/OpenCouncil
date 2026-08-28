@@ -83,7 +83,7 @@ export function makeRunnerDbHelpers(db: DB) {
         | {
             id: string
             name: string
-            strategy: 'round_robin' | 'debate'
+            strategy: 'round_robin' | 'debate' | 'swarm' | 'critique' | 'review' | 'architect' | 'red_team'
             rounds: number
             moderator_member_id: string | null
           }
@@ -148,6 +148,22 @@ export function makeRunnerDbHelpers(db: DB) {
         | undefined
       return row ?? null
     },
+    loadWorkspace(sessionId: string): { root: string; files: string[] } | null {
+      const row = db.prepare('SELECT workspace_path, workspace_files_json FROM sessions WHERE id=?').get(sessionId) as
+        | { workspace_path: string | null; workspace_files_json: string | null }
+        | undefined
+      if (!row?.workspace_path) return null
+      let files: string[] = []
+      if (row.workspace_files_json) {
+        try {
+          const parsed = JSON.parse(row.workspace_files_json) as unknown
+          if (Array.isArray(parsed)) files = parsed.filter((x): x is string => typeof x === 'string')
+        } catch {
+          files = []
+        }
+      }
+      return { root: row.workspace_path, files }
+    },
     updateSessionStatus(
       sessionId: string,
       status: 'running' | 'completed' | 'failed' | 'cancelled',
@@ -167,7 +183,7 @@ export function makeRunnerDbHelpers(db: DB) {
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: deps.config.logLevel } })
+  const app = Fastify({ logger: { level: deps.config.logLevel }, ignoreTrailingSlash: true })
 
   const { registerErrorHandlers } = await import('./lib/errors.js')
   registerErrorHandlers(app)

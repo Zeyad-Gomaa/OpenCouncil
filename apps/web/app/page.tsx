@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { apiGet, apiSend } from './lib/api'
-import type { CouncilDTO, SessionDTO } from '@opencouncil/shared'
+import { STRATEGY_LABELS, type CouncilDTO, type SessionDTO } from '@opencouncil/shared'
 
 function timeAgo(iso: string): string {
   const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -44,6 +44,10 @@ function HomeContent() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [workspacePath, setWorkspacePath] = useState('')
+  const [workspaceFiles, setWorkspaceFiles] = useState('')
+  const [workspaceNote, setWorkspaceNote] = useState<string | null>(null)
+  const [attachOpen, setAttachOpen] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -61,12 +65,43 @@ function HomeContent() {
     if (initialTopic) setTopic(initialTopic)
   }, [initialTopic])
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('oc.workspace')
+      if (!saved) return
+      const parsed = JSON.parse(saved) as { path?: string; files?: string }
+      if (parsed.path) {
+        setWorkspacePath(parsed.path)
+        setAttachOpen(true)
+      }
+      if (parsed.files) setWorkspaceFiles(parsed.files)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   async function convene() {
     if (!councilId || !topic.trim() || busy) return
     setBusy(true)
     setError(null)
     try {
-      const s = await apiSend<{ id: string }>('/sessions', 'POST', { councilId, topic: topic.trim() })
+      const files = workspaceFiles
+        .split(/[, \n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      try {
+        if (workspacePath.trim()) {
+          localStorage.setItem('oc.workspace', JSON.stringify({ path: workspacePath.trim(), files: workspaceFiles }))
+        }
+      } catch {
+        /* ignore */
+      }
+      const s = await apiSend<{ id: string }>('/sessions', 'POST', {
+        councilId,
+        topic: topic.trim(),
+        ...(workspacePath.trim() ? { workspacePath: workspacePath.trim() } : {}),
+        ...(files.length ? { workspaceFiles: files } : {}),
+      })
       router.push(`/sessions/view/?id=${s.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -130,6 +165,7 @@ function HomeContent() {
                   onKeyDown={handleKey}
                   disabled={busy}
                   rows={2}
+                  autoFocus
                 />
                 <button
                   className="send-btn"
@@ -160,11 +196,104 @@ function HomeContent() {
               {selected && (
                 <div className="chat-input-meta">
                   <span className="muted">
-                    {selected.strategy === 'debate' ? 'Debate' : 'Round robin'} · {selected.members.length} members ·{' '}
+                    {STRATEGY_LABELS[selected.strategy] || selected.strategy} · {selected.members.length} members ·{' '}
                     {selected.rounds} {selected.rounds === 1 ? 'round' : 'rounds'}
                     {selected.moderatorMemberId ? ' · Moderated' : ''}
                   </span>
-                  <span className="muted">{topic.length > 0 ? `${topic.length}` : 'Enter to send'}</span>
+                  <button
+                    type="button"
+                    className={`ghost sm attach-toggle ${attachOpen || workspacePath ? 'on' : ''}`}
+                    onClick={() => setAttachOpen((v) => !v)}
+                  >
+                    {workspacePath.trim() ? 'Folder attached' : 'Attach folder'}
+                  </button>
+                </div>
+              )}
+
+              {attachOpen && (
+                <div className="workspace-attach">
+                  <label>Local folder or file</label>
+                  <input
+                    value={workspacePath}
+                    onChange={(e) => {
+                      setWorkspacePath(e.target.value)
+                      setWorkspaceNote(null)
+                    }}
+                    placeholder="/absolute/path/to/repo"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <input
+                    value={workspaceFiles}
+                    onChange={(e) => setWorkspaceFiles(e.target.value)}
+                    placeholder="Optional files to prioritize: src/app.ts, README.md"
+                    style={{ marginTop: 8 }}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <div className="workspace-attach-row">
+                    <span className="input-hint">
+                      This process reads the path. Agents can list, read, and search — they cannot write.
+                    </span>
+                    <div className="workspace-attach-actions">
+                      {workspacePath && (
+                        <button
+                          type="button"
+                          className="ghost sm"
+                          onClick={() => {
+                            setWorkspacePath('')
+                            setWorkspaceFiles('')
+                            setWorkspaceNote(null)
+                            try {
+                              localStorage.removeItem('oc.workspace')
+                            } catch {
+                              /* ignore */
+                            }
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        disabled={!workspacePath.trim() || busy}
+                        onClick={async () => {
+                          setWorkspaceNote(null)
+                          try {
+                            const files = workspaceFiles
+                              .split(/[, \n]+/)
+                              .map((s) => s.trim())
+                              .filter(Boolean)
+                            const res = await apiSend<{ ok: boolean; root: string; fileCount: number }>(
+                              '/workspace/preview',
+                              'POST',
+                              { path: workspacePath.trim(), files },
+                            )
+                            setWorkspaceNote(`Ready · ${res.fileCount} files from ${res.root}`)
+                            try {
+                              localStorage.setItem(
+                                'oc.workspace',
+                                JSON.stringify({ path: workspacePath.trim(), files: workspaceFiles }),
+                              )
+                            } catch {
+                              /* ignore */
+                            }
+                          } catch (e) {
+                            setWorkspaceNote(e instanceof Error ? e.message : String(e))
+                          }
+                        }}
+                      >
+                        Check path
+                      </button>
+                    </div>
+                  </div>
+                  {selected && ['review', 'architect', 'red_team'].includes(selected.strategy) && (
+                    <p className="input-hint">This council is a coding mode — attaching the repo is the point.</p>
+                  )}
+                  {workspaceNote && (
+                    <p className={workspaceNote.startsWith('Ready') ? 'notice' : 'form-error'}>{workspaceNote}</p>
+                  )}
                 </div>
               )}
             </div>

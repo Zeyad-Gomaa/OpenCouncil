@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { apiGet } from '../lib/api'
 import type { SessionDTO } from '@opencouncil/shared'
+import BrandMark from './BrandMark'
 
 const HomeIcon = () => (
   <svg className="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -53,7 +54,7 @@ export default function Nav() {
   return (
     <nav className="sidenav">
       <Link href="/" className="brand">
-        <div className="brand-mark">OC</div>
+        <BrandMark />
         <span>OpenCouncil</span>
       </Link>
 

@@ -6,15 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
 - Settings can pull live model availability and published $/MTok pricing from
   a provider (OpenRouter natively; OpenAI/Anthropic/Google/Groq/xAI/etc. via
   their model list APIs plus an OpenRouter price overlay).
+- Council modes: swarm, critique, plus coding-decision modes — code review,
+  architecture, and red team.
+- Attach a local folder or files to a session. Agents get a tree briefing and
+  sandboxed `list_dir` / `read_file` / `grep` tools (read-only, no writes).
+- Web research pulls Wikipedia images and YouTube hits alongside page results.
+- Brand mark: gold C sitting on the white O ring.
 
 ### Changed
 
 - Chamber UI restyled to a Grok-like conversation layout: black canvas, white
   primary actions, slim sidebar with recent sessions, centered composer.
 - Home empty state and live chamber now feel like a chat, not an admin dashboard.
+- Long sessions keep older rounds collapsed and clamp very long messages so the
+  chamber does not mount every markdown/mermaid block at once.
+- Adding a provider opens the live catalog so you can enroll models immediately.
 
 ### Fixed
 
@@ -26,6 +37,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `prepare` is wired in `package.json`, so `npm install` in a clone is enough
   to produce a runnable `npx opencouncil` when artifacts are missing.
 - Provider "Test" no longer uses `window.alert`.
+- Settings tabs no longer clip the Councils tab; council cards cap the avatar
+  row instead of overflowing.
+- Pulling models (OpenRouter and others) no longer 404s with "no such API
+  route". The static UI no longer registers a GET catch-all that swallowed
+  `/api/v1/providers/:id/catalog`; the UI now POSTs `discover-models`. Restart
+  the process after updating.
 
 ## [0.1.0] — 2026-08-27
 

@@ -283,7 +283,7 @@ var init_mock = __esm({
         const systemMsg = opts.messages.find((m) => m.role === "system")?.content ?? "";
         const lastUser = [...opts.messages].reverse().find((m) => m.role === "user")?.content ?? "";
         const persona = systemMsg.split("\u2014")[0]?.trim() || "Member";
-        const isSynthesis = /synthes/i.test(systemMsg);
+        const isSynthesis = /you are the moderator of an ai council/i.test(systemMsg) || /\bsynthesize\b/i.test(systemMsg);
         let text;
         if (isSynthesis) {
           text = `**The Council Convenes \u2014 Synthesis**
@@ -298,6 +298,21 @@ This concludes the council's deliberation.`;
         } else {
           const opener = pick(OPENERS, persona + opts.modelId);
           text = `${opener}, ${persona.toLowerCase()} holds that ${opts.modelId} approaches "${lastUser.slice(0, 80)}" with a structured plan: define the objective, enumerate constraints, then commit to the highest-leverage first move while keeping retreat options open.`;
+          const joined = opts.messages.map((m) => m.content).join("\n");
+          const urls = [...joined.matchAll(/https?:\/\/[^\s)\]>]+/g)].map((m) => m[0]);
+          const unique = [...new Set(urls)].slice(0, 3);
+          if (unique.length > 0) {
+            text += `
+
+Grounded in live sources:
+` + unique.map((u, i) => `${i + 1}. [${u}](${u})`).join("\n");
+          }
+          const imgs = [...joined.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)].map((m) => m[1]).slice(0, 2);
+          if (imgs.length > 0) {
+            text += `
+
+` + imgs.map((src, i) => `![Source image ${i + 1}](${src})`).join("\n");
+          }
         }
         return {
           text,
@@ -490,21 +505,66 @@ Be concise, rigorous, and direct. Do not mention that you are an AI.`;
 
 // apps/server/src/engine/strategies.ts
 function getStrategy(kind) {
-  return kind === "debate" ? DEBATE : ROUND_ROBIN;
+  switch (kind) {
+    case "debate":
+      return DEBATE;
+    case "swarm":
+      return SWARM;
+    case "critique":
+      return CRITIQUE;
+    case "review":
+      return REVIEW;
+    case "architect":
+      return ARCHITECT;
+    case "red_team":
+      return RED_TEAM;
+    default:
+      return ROUND_ROBIN;
+  }
 }
-var ROUND_ROBIN, DEBATE;
+var ROUND_ROBIN, DEBATE, SWARM, CRITIQUE, REVIEW, ARCHITECT, RED_TEAM;
 var init_strategies = __esm({
   "apps/server/src/engine/strategies.ts"() {
     "use strict";
     ROUND_ROBIN = {
       kind: "round_robin",
-      buildRounds: ({ rounds, memberIds }) => Array.from({ length: rounds }, () => memberIds),
+      parallel: true,
       includeTranscript: () => false
     };
     DEBATE = {
       kind: "debate",
-      buildRounds: ({ rounds, memberIds }) => Array.from({ length: rounds }, () => memberIds),
+      parallel: false,
       includeTranscript: (round) => round > 1
+    };
+    SWARM = {
+      kind: "swarm",
+      parallel: true,
+      includeTranscript: () => true,
+      promptAddon: "SWARM MODE: You are one agent in a parallel swarm. Do not wait for permission. Add a distinct angle, tool, or fact your peers are likely to miss. Be terse and high-signal. Cite sources."
+    };
+    CRITIQUE = {
+      kind: "critique",
+      parallel: true,
+      includeTranscript: (round) => round > 1,
+      promptAddon: "CRITIQUE MODE: Round 1 is your independent take. Later rounds, pressure-test the swarm: name weak evidence, missing constraints, and what would falsify the leading view. Cite sources."
+    };
+    REVIEW = {
+      kind: "review",
+      parallel: true,
+      includeTranscript: (round) => round > 1,
+      promptAddon: "CODE REVIEW MODE: You are reviewing a coding decision, design, or patch. Round 1: independent notes (bugs, missing tests, API shape, regressions). Later rounds: reconcile findings. Prefer concrete file/function-level comments, failure cases, and a clear ship / request-changes verdict. Cite docs and sources."
+    };
+    ARCHITECT = {
+      kind: "architect",
+      parallel: false,
+      includeTranscript: (round) => round > 1,
+      promptAddon: "ARCHITECTURE MODE: Sequential design review for a coding decision. First speaker proposes a concrete design (components, data flow, interfaces, migration). Later speakers refine: coupling, operability, rollback, and simpler alternatives. End with a recommended shape, not a list of options. Cite sources."
+    };
+    RED_TEAM = {
+      kind: "red_team",
+      parallel: true,
+      includeTranscript: () => true,
+      promptAddon: "RED TEAM MODE: Your job is to break the proposed coding approach. Hunt race conditions, auth gaps, data loss, unbounded cost, unsafe defaults, and hostile inputs. Be specific: attack, impact, likelihood, fix. Do not compliment the design unless you first name a real failure. Cite sources."
     };
   }
 });
@@ -730,21 +790,408 @@ function decodeDdgUrl(rawUrl) {
   return cleanUrl;
 }
 function stripHtml(html) {
-  return html.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+  return html.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&#x27;/gi, "'").replace(/&#x2F;/gi, "/").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
 }
-function formatSearchResults(results) {
-  if (results.length === 0) return "";
-  return `=== LIVE WEB RESEARCH & SOURCES ===
-` + results.map((r, i) => `[Source ${i + 1}]: "${r.title}"
-URL: ${r.url}
-Summary: ${r.snippet}`).join("\n\n") + `
-====================================`;
+function formatResearchMarkdown(pack) {
+  const parts = [];
+  if (pack.web.length > 0) {
+    parts.push(
+      `**Live web research**
+
+` + pack.web.map((r, i) => {
+        const img = r.imageUrl ? `
+
+![${r.title}](${r.imageUrl})` : "";
+        return `${i + 1}. [${r.title}](${r.url})
+   ${r.snippet}${img}`;
+      }).join("\n\n")
+    );
+  }
+  if (pack.images.length > 0) {
+    parts.push(
+      `**Images**
+
+` + pack.images.map((r) => {
+        const src = r.imageUrl || r.url;
+        return `[![${r.title}](${src})](${r.url})`;
+      }).join("\n\n")
+    );
+  }
+  if (pack.videos.length > 0) {
+    parts.push(
+      `**Videos**
+
+` + pack.videos.map((r) => `- [${r.title}](${r.url})${r.snippet ? ` \u2014 ${r.snippet}` : ""}`).join("\n")
+    );
+  }
+  return parts.join("\n\n");
+}
+async function searchWikiImages(query, maxResults = 4, timeoutMs = 6e3) {
+  const headers = { "user-agent": USER_AGENT, accept: "application/json" };
+  const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${Math.max(maxResults * 2, 8)}&prop=pageimages|info&inprop=url&piprop=thumbnail&pithumbsize=800&format=json`;
+  const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${maxResults}&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json`;
+  const [wikiRes, commonsRes] = await Promise.all([
+    fetchWithTimeout(wikiUrl, { headers }, timeoutMs).catch(() => null),
+    fetchWithTimeout(commonsUrl, { headers }, timeoutMs).catch(() => null)
+  ]);
+  const out = [];
+  if (wikiRes?.ok) {
+    const data = await wikiRes.json();
+    for (const p of Object.values(data.query?.pages ?? {})) {
+      if (!p.thumbnail?.source) continue;
+      out.push({
+        title: p.title || "Image",
+        url: p.fullurl || p.canonicalurl || `https://en.wikipedia.org/wiki/${encodeURIComponent((p.title || "").replace(/ /g, "_"))}`,
+        snippet: p.title || "",
+        kind: "image",
+        imageUrl: p.thumbnail.source
+      });
+    }
+  }
+  if (out.length < maxResults && commonsRes?.ok) {
+    const data = await commonsRes.json();
+    for (const p of Object.values(data.query?.pages ?? {})) {
+      const info = p.imageinfo?.[0];
+      const src = info?.thumburl || info?.url;
+      if (!src) continue;
+      out.push({
+        title: (p.title || "Image").replace(/^File:/, ""),
+        url: src,
+        snippet: p.title || "",
+        kind: "image",
+        imageUrl: src
+      });
+    }
+  }
+  const seen = /* @__PURE__ */ new Set();
+  return out.filter((r) => {
+    if (!r.imageUrl || seen.has(r.imageUrl)) return false;
+    seen.add(r.imageUrl);
+    return true;
+  }).slice(0, maxResults);
+}
+async function researchTopic(query, timeoutMs = 8e3) {
+  const cleanQuery = query.trim().slice(0, 400);
+  if (!cleanQuery) return { web: [], images: [], videos: [] };
+  const [web, images, videos] = await Promise.all([
+    searchWeb(cleanQuery, 5, timeoutMs).catch(() => []),
+    searchWikiImages(cleanQuery, 4, timeoutMs).catch(() => []),
+    searchDuckDuckGo(`${cleanQuery} site:youtube.com`, 3, timeoutMs).then((rows) => rows.map((r) => ({ ...r, kind: "video" }))).catch(() => [])
+  ]);
+  return { web, images, videos };
 }
 var USER_AGENT;
 var init_web_search = __esm({
   "apps/server/src/engine/web-search.ts"() {
     "use strict";
     USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  }
+});
+
+// apps/server/src/engine/workspace.ts
+var workspace_exports = {};
+__export(workspace_exports, {
+  WORKSPACE_TOOL_PROMPT: () => WORKSPACE_TOOL_PROMPT,
+  buildWorkspaceBriefing: () => buildWorkspaceBriefing,
+  grepWorkspace: () => grepWorkspace,
+  listTree: () => listTree,
+  matchGlob: () => matchGlob,
+  normalizeWorkspace: () => normalizeWorkspace,
+  parseToolCalls: () => parseToolCalls,
+  readWorkspaceFile: () => readWorkspaceFile,
+  resolveInside: () => resolveInside,
+  resolveWorkspaceRoot: () => resolveWorkspaceRoot,
+  runTool: () => runTool,
+  stripToolBlocks: () => stripToolBlocks
+});
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+function expandHome(input) {
+  return input.trim().replace(/^~(?=\/|$)/, process.env.HOME || "");
+}
+function resolveWorkspaceRoot(input) {
+  const abs = path.resolve(expandHome(input));
+  if (!path.isAbsolute(abs)) throw new Error("workspace path must be absolute");
+  if (!existsSync(abs)) throw new Error(`workspace not found: ${abs}`);
+  const st = statSync(abs);
+  if (!st.isDirectory() && !st.isFile()) throw new Error("workspace must be a file or folder");
+  const root = st.isFile() ? path.dirname(abs) : abs;
+  if (root === "/" || root === path.parse(root).root) throw new Error("refusing to attach a filesystem root");
+  return root;
+}
+function normalizeWorkspace(input, extraFiles = []) {
+  const abs = path.resolve(expandHome(input));
+  if (!existsSync(abs)) throw new Error(`workspace not found: ${abs}`);
+  const st = statSync(abs);
+  const pointedFile = st.isFile() ? abs : null;
+  const root = resolveWorkspaceRoot(input);
+  const files = [];
+  const seen = /* @__PURE__ */ new Set();
+  const addRel = (rel) => {
+    const n = rel.split(path.sep).join("/").replace(/^\.\//, "");
+    if (!n || n === "." || n.startsWith("../") || n === ".." || seen.has(n)) return;
+    try {
+      resolveInside(root, n);
+    } catch {
+      return;
+    }
+    seen.add(n);
+    files.push(n);
+  };
+  if (pointedFile) addRel(path.relative(root, pointedFile));
+  for (const raw of extraFiles) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const candidate = path.isAbsolute(expandHome(trimmed)) ? path.resolve(expandHome(trimmed)) : path.resolve(root, trimmed);
+    addRel(path.relative(root, candidate));
+  }
+  return { root, files };
+}
+function resolveInside(root, rel = ".") {
+  const target = path.resolve(root, rel);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (target !== root && !target.startsWith(prefix)) throw new Error("path escapes the workspace");
+  return target;
+}
+function isTextFile(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (TEXT_EXT.has(ext)) return true;
+  const base = path.basename(file);
+  return base === "Makefile" || base === "Dockerfile" || base === "CMakeLists.txt";
+}
+function listTree(root, rel = ".", max = MAX_TREE) {
+  const dir = resolveInside(root, rel);
+  const out = [];
+  const walk = (current) => {
+    if (out.length >= max) return;
+    let entries;
+    try {
+      entries = readdirSync(current);
+    } catch {
+      return;
+    }
+    entries.sort();
+    for (const name of entries) {
+      if (out.length >= max) return;
+      if (name.startsWith(".") && name !== ".env.example") continue;
+      if (SKIP_DIRS.has(name)) continue;
+      const full = path.join(current, name);
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      const relative = path.relative(root, full);
+      if (st.isDirectory()) {
+        out.push(relative + "/");
+        walk(full);
+      } else if (st.isFile() && isTextFile(full) && st.size <= MAX_FILE_BYTES) {
+        out.push(relative);
+      }
+    }
+  };
+  if (statSync(dir).isFile()) return [path.relative(root, dir) || path.basename(dir)];
+  walk(dir);
+  return out;
+}
+function readWorkspaceFile(root, rel, startLine, endLine) {
+  const full = resolveInside(root, rel);
+  if (!existsSync(full) || !statSync(full).isFile()) throw new Error(`file not found: ${rel}`);
+  if (statSync(full).size > MAX_FILE_BYTES) throw new Error(`file too large: ${rel}`);
+  const raw = readFileSync(full, "utf8");
+  if (startLine == null && endLine == null) return raw.slice(0, MAX_FILE_BYTES);
+  const lines = raw.split("\n");
+  const from = Math.max(1, startLine ?? 1);
+  const to = Math.min(lines.length, endLine ?? lines.length);
+  return lines.slice(from - 1, to).map((l, i) => `${from + i}|${l}`).join("\n");
+}
+function matchGlob(file, glob) {
+  const f = file.replace(/\\/g, "/");
+  const g = glob.replace(/\\/g, "/").trim();
+  if (!g) return true;
+  const re = g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "::GLOBSTAR::").replace(/\*/g, "[^/]*").replace(/::GLOBSTAR::/g, ".*");
+  return new RegExp(`^${re}$`).test(f) || new RegExp(`(^|/)${re}$`).test(f);
+}
+function grepWorkspace(root, pattern, rel = ".", glob) {
+  let re;
+  try {
+    re = new RegExp(pattern, "i");
+  } catch {
+    throw new Error("invalid grep pattern");
+  }
+  const files = listTree(root, rel, 400).filter((f) => !f.endsWith("/"));
+  const filtered = glob ? files.filter((f) => matchGlob(f, glob)) : files;
+  const hits = [];
+  for (const file of filtered) {
+    if (hits.length >= MAX_GREP_HITS) break;
+    let text;
+    try {
+      text = readWorkspaceFile(root, file);
+    } catch {
+      continue;
+    }
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (hits.length >= MAX_GREP_HITS) break;
+      if (re.test(lines[i])) hits.push(`${file}:${i + 1}:${lines[i].slice(0, 200)}`);
+    }
+  }
+  return hits;
+}
+function buildWorkspaceBriefing(ref) {
+  const normalized = normalizeWorkspace(ref.root, ref.files);
+  const root = normalized.root;
+  const extra = normalized.files;
+  const tree = listTree(root);
+  const preferred = extra.length ? extra : tree.filter((f) => !f.endsWith("/")).slice(0, 12);
+  const chunks = [
+    `Workspace root: ${root}`,
+    `File tree (${tree.length} entries, truncated):
+${tree.slice(0, MAX_TREE).join("\n")}`
+  ];
+  let used = chunks.join("\n").length;
+  for (const rel of preferred) {
+    if (used >= MAX_BRIEF_CHARS) break;
+    try {
+      const body = readWorkspaceFile(root, rel).slice(0, 4e3);
+      const block = `
+--- ${rel} ---
+${body}`;
+      if (used + block.length > MAX_BRIEF_CHARS) break;
+      chunks.push(block);
+      used += block.length;
+    } catch {
+    }
+  }
+  return chunks.join("\n");
+}
+function parseToolCalls(text) {
+  const calls = [];
+  const fence = /```tool\s*\n([\s\S]*?)```/gi;
+  let m;
+  while ((m = fence.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1] || "{}");
+      if (parsed && (parsed.name === "list_dir" || parsed.name === "read_file" || parsed.name === "grep")) {
+        calls.push(parsed);
+      }
+    } catch {
+    }
+  }
+  const xml = /<tool\s+name="(list_dir|read_file|grep)">([\s\S]*?)<\/tool>/gi;
+  while ((m = xml.exec(text)) !== null) {
+    const name = m[1];
+    const inner = m[2] || "";
+    const pathMatch = /<path>([\s\S]*?)<\/path>/i.exec(inner);
+    const patternMatch = /<pattern>([\s\S]*?)<\/pattern>/i.exec(inner);
+    const globMatchXml = /<glob>([\s\S]*?)<\/glob>/i.exec(inner);
+    calls.push({
+      name,
+      path: pathMatch?.[1]?.trim(),
+      pattern: patternMatch?.[1]?.trim(),
+      glob: globMatchXml?.[1]?.trim()
+    });
+  }
+  return calls;
+}
+function runTool(root, call) {
+  try {
+    if (call.name === "list_dir") {
+      const entries = listTree(root, call.path || ".");
+      return `list_dir ${call.path || "."}
+${entries.join("\n") || "(empty)"}`;
+    }
+    if (call.name === "read_file") {
+      if (!call.path) return "read_file error: path required";
+      return `read_file ${call.path}
+${readWorkspaceFile(root, call.path, call.startLine, call.endLine)}`;
+    }
+    if (call.name === "grep") {
+      if (!call.pattern) return "grep error: pattern required";
+      const hits = grepWorkspace(root, call.pattern, call.path || ".", call.glob);
+      return `grep ${call.pattern}
+${hits.join("\n") || "(no matches)"}`;
+    }
+    return `unknown tool ${String(call.name)}`;
+  } catch (err) {
+    return `tool error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+function stripToolBlocks(text) {
+  return text.replace(/```tool\s*\n[\s\S]*?```/gi, "").replace(/<tool\s+name="[^"]+">[\s\S]*?<\/tool>/gi, "").trim();
+}
+var SKIP_DIRS, TEXT_EXT, MAX_FILE_BYTES, MAX_BRIEF_CHARS, MAX_TREE, MAX_GREP_HITS, WORKSPACE_TOOL_PROMPT;
+var init_workspace = __esm({
+  "apps/server/src/engine/workspace.ts"() {
+    "use strict";
+    SKIP_DIRS = /* @__PURE__ */ new Set([
+      "node_modules",
+      ".git",
+      "dist",
+      ".next",
+      "coverage",
+      "vendor",
+      "__pycache__",
+      ".venv",
+      "venv",
+      "build",
+      "out",
+      "target",
+      ".cache",
+      ".turbo",
+      ".idea",
+      ".vscode"
+    ]);
+    TEXT_EXT = /* @__PURE__ */ new Set([
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+      ".py",
+      ".go",
+      ".rs",
+      ".java",
+      ".kt",
+      ".rb",
+      ".php",
+      ".c",
+      ".cc",
+      ".cpp",
+      ".h",
+      ".hpp",
+      ".cs",
+      ".swift",
+      ".md",
+      ".json",
+      ".yml",
+      ".yaml",
+      ".toml",
+      ".sql",
+      ".css",
+      ".scss",
+      ".html",
+      ".vue",
+      ".svelte",
+      ".graphql",
+      ".sh",
+      ".env.example"
+    ]);
+    MAX_FILE_BYTES = 2e5;
+    MAX_BRIEF_CHARS = 24e3;
+    MAX_TREE = 250;
+    MAX_GREP_HITS = 40;
+    WORKSPACE_TOOL_PROMPT = `You have tools on a local workspace attached to this session.
+When you need a file, list, or search, emit a tool block and stop \u2014 the runtime will call you again with results.
+
+\`\`\`tool
+{"name":"read_file","path":"relative/path.ts"}
+\`\`\`
+
+Tools: list_dir (optional path), read_file (path, optional startLine/endLine), grep (pattern, optional path, optional glob like "*.ts").
+Paths are relative to the workspace root. Do not ask the human to paste files. After you have enough context, answer without a tool block.`;
   }
 });
 
@@ -769,7 +1216,9 @@ function computeCost(promptTokens, completionTokens, inPrice, outPrice) {
   return Number((inCost + outCost).toFixed(6));
 }
 function extraGroundingFromTranscript(transcript) {
-  return transcript.filter((e) => e.memberId === "system_web" || e.memberId === "user");
+  return transcript.filter(
+    (e) => e.memberId === "system_web" || e.memberId === "user" || e.memberId === "system_workspace"
+  );
 }
 function formatTranscriptForMember(transcript, currentMemberId, currentMemberName) {
   return transcript.map((e) => {
@@ -779,6 +1228,10 @@ ${e.content}`;
     }
     if (e.memberId === "system_web") {
       return `[WEB SEARCH EVIDENCE in Round ${e.round}]:
+${e.content}`;
+    }
+    if (e.memberId === "system_workspace") {
+      return `[WORKSPACE in Round ${e.round}]:
 ${e.content}`;
     }
     const isSelf = e.memberId === currentMemberId;
@@ -809,6 +1262,7 @@ var init_runner = __esm({
     init_moderator();
     init_strategies();
     init_web_search();
+    init_workspace();
     CALL_TIMEOUT_MS = 12e4;
     SessionRunner = class {
       constructor(deps) {
@@ -855,14 +1309,14 @@ var init_runner = __esm({
           const strategy = getStrategy(council.strategy);
           const transcript = [];
           try {
-            const searchResults = await searchWeb(topic, 5, 6e3);
-            if (searchResults.length > 0) {
-              const webFormatted = formatSearchResults(searchResults);
+            const pack = await researchTopic(topic, 7e3);
+            const md = formatResearchMarkdown(pack);
+            if (md) {
               transcript.push({
                 speaker: "Web Research",
                 memberId: "system_web",
                 round: 0,
-                content: webFormatted
+                content: md
               });
               const searchMsgId = this.deps.insertMessage({
                 sessionId,
@@ -871,10 +1325,7 @@ var init_runner = __esm({
                 kind: "system",
                 round: 0,
                 roundPosition: 1,
-                content: `**Live web research**
-
-${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
-   ${r.snippet}`).join("\n\n")}`
+                content: md
               });
               bus.publish({
                 type: "message.created",
@@ -887,10 +1338,7 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
                   role: "assistant",
                   kind: "system",
                   round: 0,
-                  content: `**Live web research**
-
-${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
-   ${r.snippet}`).join("\n\n")}`,
+                  content: md,
                   createdAt: (/* @__PURE__ */ new Date()).toISOString()
                 }
               });
@@ -922,6 +1370,60 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
             }
           } catch {
           }
+          const workspace = this.deps.loadWorkspace?.(sessionId) ?? null;
+          if (workspace?.root) {
+            try {
+              const brief = buildWorkspaceBriefing(workspace);
+              transcript.push({
+                speaker: "Workspace",
+                memberId: "system_workspace",
+                round: 0,
+                content: brief
+              });
+              const wsId = this.deps.insertMessage({
+                sessionId,
+                memberId: null,
+                memberName: "Workspace",
+                kind: "system",
+                round: 0,
+                roundPosition: 2,
+                content: `**Attached workspace** \`${workspace.root}\`
+
+Agents can list, read, and search these files.
+
+\`\`\`
+${brief.slice(0, 6e3)}
+\`\`\``
+              });
+              bus.publish({
+                type: "message.created",
+                sessionId,
+                message: {
+                  id: String(wsId),
+                  sessionId,
+                  memberId: null,
+                  memberName: "Workspace",
+                  role: "assistant",
+                  kind: "system",
+                  round: 0,
+                  content: `**Attached workspace** \`${workspace.root}\`
+
+Agents can list, read, and search these files.`,
+                  createdAt: (/* @__PURE__ */ new Date()).toISOString()
+                }
+              });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.deps.insertMessage({
+                sessionId,
+                memberId: null,
+                memberName: "Workspace",
+                kind: "system",
+                round: 0,
+                content: `Workspace could not be attached: ${msg}`
+              });
+            }
+          }
           let roundNum = 0;
           let totalPlannedRounds = council.rounds;
           while (roundNum < totalPlannedRounds) {
@@ -944,7 +1446,7 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
             }
             bus.publish({ type: "round.started", sessionId, round: roundNum });
             const memberIds = activeMembers.map((m) => m.id);
-            if (council.strategy === "debate") {
+            if (!strategy.parallel) {
               for (let i = 0; i < memberIds.length; i++) {
                 const memberId = memberIds[i];
                 const member = activeMembers.find((m) => m.id === memberId);
@@ -970,7 +1472,10 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
                   roundNum,
                   i,
                   strategy.includeTranscript(roundNum) || transcript.length > 0,
-                  signal
+                  signal,
+                  false,
+                  strategy.promptAddon,
+                  workspace?.root
                 );
               }
             } else {
@@ -986,7 +1491,10 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
                     roundNum,
                     i,
                     strategy.includeTranscript(roundNum),
-                    signal
+                    signal,
+                    false,
+                    strategy.promptAddon,
+                    workspace?.root
                   );
                 })
               );
@@ -1016,7 +1524,7 @@ ${searchResults.map((r, i) => `${i + 1}. [${r.title}](${r.url})
         }
         this.deps.updateSessionStatus(sessionId, "completed");
       }
-      async callMember(sessionId, member, topic, transcript, round, roundPosition, includeTranscript, signal, isSynthesis = false) {
+      async callMember(sessionId, member, topic, transcript, round, roundPosition, includeTranscript, signal, isSynthesis = false, promptAddon, workspaceRoot) {
         const { bus } = this.deps;
         bus.publish({
           type: "member.started",
@@ -1055,9 +1563,13 @@ ${member.systemPrompt}
 2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.
 3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").
 4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.
-5. WEB EVIDENCE & CITATIONS: Utilize and cite live links and web sources ([Title](url)) to ground your arguments in empirical facts and documentation.
+5. WEB EVIDENCE & CITATIONS: Cite live links from the research briefing as [Title](url). When an image URL is provided, embed it with ![caption](url). Include video links when they help.
 6. DIAGRAMS: Prefer a simple \`\`\`mermaid flowchart TD\`\`\` when a picture helps. Node IDs must be alphanumeric (no spaces) \u2014 put labels in brackets: Foo[Label with spaces]. Never use the reserved word "end" as a node id. Use <br/> not <br>. Skip a diagram if the syntax would be unclear.
-7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.`
+7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.` + (promptAddon ? `
+
+${promptAddon}` : "") + (workspaceRoot ? `
+
+${WORKSPACE_TOOL_PROMPT}` : "")
           );
           messages.push({ role: "system", content: systemPromptParts.join("\n") });
           if (includeTranscript && transcript.length > 0) {
@@ -1086,33 +1598,56 @@ Now respond for Round ${round}. Speak directly to your council peers and advance
           }
           messages.push({ role: "user", content: topic });
         }
-        const boundedMessages = fitMessages(messages, {
+        const budget = {
           contextWindow: model.contextWindow,
           responseTokens: member.maxTokens ?? 1024,
           safetyMargin: 128
-        });
+        };
         const adapter = getAdapter(model.providerProtocol);
         const started = Date.now();
         try {
           const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(2);
           this.providerLimits.set(model.providerId, semaphore);
-          const attempted = await withRetry(
-            () => semaphore.run(
-              () => adapter.chat({
-                baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? "",
-                apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : void 0,
-                modelId: model.modelId,
-                messages: boundedMessages,
-                temperature: member.temperature,
-                maxTokens: member.maxTokens ?? void 0,
-                timeoutMs: CALL_TIMEOUT_MS,
-                signal
-              })
-            ),
-            void 0,
+          const chatBase = {
+            baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? "",
+            apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : void 0,
+            modelId: model.modelId,
+            temperature: member.temperature,
+            maxTokens: member.maxTokens ?? void 0,
+            timeoutMs: CALL_TIMEOUT_MS,
             signal
-          );
-          const result = attempted.value;
+          };
+          let promptTokens = 0;
+          let completionTokens = 0;
+          let retryCount = 0;
+          let text = "";
+          const working = [...messages];
+          const maxHops = workspaceRoot && !isSynthesis ? 4 : 0;
+          for (let hop = 0; hop <= maxHops; hop++) {
+            const bounded = fitMessages(working, budget);
+            const attempted = await withRetry(
+              () => semaphore.run(() => adapter.chat({ ...chatBase, messages: bounded })),
+              void 0,
+              signal
+            );
+            retryCount += attempted.retryCount;
+            promptTokens += attempted.value.promptTokens ?? 0;
+            completionTokens += attempted.value.completionTokens ?? 0;
+            text = attempted.value.text;
+            const tools = workspaceRoot && !isSynthesis ? parseToolCalls(text) : [];
+            if (!workspaceRoot || !tools.length) break;
+            const toolOut = tools.map((t) => runTool(workspaceRoot, t)).join("\n\n");
+            working.push({ role: "assistant", content: text });
+            working.push({
+              role: "user",
+              content: `TOOL RESULTS:
+${toolOut}
+
+Continue your council turn. If you have enough, reply without a tool block.`
+            });
+          }
+          text = stripToolBlocks(text) || text;
+          const result = { text, promptTokens, completionTokens };
           const latency = Date.now() - started;
           const cost = computeCost(
             result.promptTokens,
@@ -1164,7 +1699,7 @@ Now respond for Round ${round}. Speak directly to your council peers and advance
             completionTokens: result.completionTokens ?? 0,
             costUsd: cost,
             latencyMs: latency,
-            retryCount: attempted.retryCount,
+            retryCount,
             status: "ok"
           });
           bus.publish({
@@ -1184,7 +1719,7 @@ Now respond for Round ${round}. Speak directly to your council peers and advance
               totalTokens: (result.promptTokens ?? 0) + (result.completionTokens ?? 0),
               costUsd: cost,
               latencyMs: latency,
-              retryCount: attempted.retryCount,
+              retryCount,
               errorCode: null,
               status: "ok",
               createdAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -1372,7 +1907,7 @@ var init_events = __esm({
 
 // packages/shared/dist/schemas.js
 import { z } from "zod";
-var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, catalogEnrollSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, sessionExtendSchema, sessionConcludeSchema, sessionInterveneSchema, configImportSchema;
+var providerProtocolSchema, providerCreateSchema, providerUpdateSchema, modelCreateSchema, modelUpdateSchema, catalogEnrollSchema, memberCreateSchema, memberUpdateSchema, strategyKindSchema, councilCreateSchema, councilUpdateSchema, sessionCreateSchema, workspacePreviewSchema, sessionExtendSchema, sessionConcludeSchema, sessionInterveneSchema, configImportSchema;
 var init_schemas = __esm({
   "packages/shared/dist/schemas.js"() {
     "use strict";
@@ -1416,7 +1951,15 @@ var init_schemas = __esm({
       enabled: z.boolean().optional()
     });
     memberUpdateSchema = memberCreateSchema.partial();
-    strategyKindSchema = z.enum(["round_robin", "debate"]);
+    strategyKindSchema = z.enum([
+      "round_robin",
+      "debate",
+      "swarm",
+      "critique",
+      "review",
+      "architect",
+      "red_team"
+    ]);
     councilCreateSchema = z.object({
       name: z.string().min(1).max(80),
       description: z.string().max(500).nullish(),
@@ -1439,7 +1982,13 @@ var init_schemas = __esm({
     });
     sessionCreateSchema = z.object({
       councilId: z.string().uuid(),
-      topic: z.string().min(1).max(8e3)
+      topic: z.string().min(1).max(8e3),
+      workspacePath: z.string().min(1).max(4e3).optional(),
+      workspaceFiles: z.array(z.string().min(1).max(1e3)).max(80).optional()
+    });
+    workspacePreviewSchema = z.object({
+      path: z.string().min(1).max(4e3),
+      files: z.array(z.string().min(1).max(1e3)).max(80).optional()
     });
     sessionExtendSchema = z.object({
       additionalRounds: z.number().int().min(1).max(50).default(1)
@@ -1568,6 +2117,15 @@ function messageToDTO(r) {
   };
 }
 function sessionToDTO(r) {
+  let workspaceFiles;
+  if (r.workspace_files_json) {
+    try {
+      const parsed = JSON.parse(r.workspace_files_json);
+      if (Array.isArray(parsed)) workspaceFiles = parsed.filter((x) => typeof x === "string");
+    } catch {
+      workspaceFiles = void 0;
+    }
+  }
   return {
     id: r.id,
     councilId: r.council_id,
@@ -1578,6 +2136,8 @@ function sessionToDTO(r) {
     startedAt: r.started_at,
     completedAt: r.completed_at,
     messageCount: r.message_count,
+    workspacePath: r.workspace_path ?? null,
+    workspaceFiles,
     createdAt: r.created_at
   };
 }
@@ -2318,6 +2878,18 @@ __export(sessions_exports, {
 import { randomUUID as randomUUID3 } from "node:crypto";
 function registerSessionRoutes(app, deps) {
   const { db, bus, sessions } = deps;
+  app.post("/api/v1/workspace/preview", async (req) => {
+    const body = workspacePreviewSchema.parse(req.body);
+    const { buildWorkspaceBriefing: buildWorkspaceBriefing2, listTree: listTree2, normalizeWorkspace: normalizeWorkspace2 } = await Promise.resolve().then(() => (init_workspace(), workspace_exports));
+    try {
+      const ref = normalizeWorkspace2(body.path, body.files ?? []);
+      const tree = listTree2(ref.root).slice(0, 80);
+      const brief = buildWorkspaceBriefing2(ref);
+      return { ok: true, root: ref.root, files: ref.files, tree, fileCount: tree.length, preview: brief.slice(0, 2500) };
+    } catch (err) {
+      throw new AppError(400, "workspace_invalid", err instanceof Error ? err.message : String(err));
+    }
+  });
   function snapshotForCouncil(councilId) {
     const council = db.prepare("SELECT id, name, description, strategy, rounds, moderator_member_id FROM councils WHERE id = ?").get(councilId);
     if (!council) throw new AppError(404, "not_found", "council not found");
@@ -2372,14 +2944,24 @@ function registerSessionRoutes(app, deps) {
     const body = sessionCreateSchema.parse(req.body);
     const council = db.prepare("SELECT id FROM councils WHERE id = ?").get(body.councilId);
     if (!council) throw new AppError(404, "not_found", "council not found");
+    let workspacePath = null;
+    let workspaceFilesJson = null;
+    if (body.workspacePath?.trim()) {
+      try {
+        const { normalizeWorkspace: normalizeWorkspace2 } = await Promise.resolve().then(() => (init_workspace(), workspace_exports));
+        const ref = normalizeWorkspace2(body.workspacePath, body.workspaceFiles ?? []);
+        workspacePath = ref.root;
+        workspaceFilesJson = ref.files.length ? JSON.stringify(ref.files) : null;
+      } catch (err) {
+        throw new AppError(400, "workspace_invalid", err instanceof Error ? err.message : String(err));
+      }
+    }
     const id = randomUUID3();
     const snapshot = snapshotForCouncil(body.councilId);
-    db.prepare(`INSERT INTO sessions (id, council_id, topic, status, snapshot_json) VALUES (?, ?, ?, 'queued', ?)`).run(
-      id,
-      body.councilId,
-      body.topic,
-      snapshot
-    );
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`
+    ).run(id, body.councilId, body.topic, snapshot, workspacePath, workspaceFilesJson);
     logActivity(db, "session.started", { sessionId: id, councilId: body.councilId });
     sessions.startSession(id, body.councilId, body.topic);
     reply.code(202);
@@ -2476,14 +3058,19 @@ function registerSessionRoutes(app, deps) {
   });
   app.post("/api/v1/sessions/:id/clone", async (req, reply) => {
     const { id } = req.params;
-    const source = db.prepare("SELECT council_id, topic, snapshot_json FROM sessions WHERE id=?").get(id);
+    const source = db.prepare("SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?").get(id);
     if (!source) throw new AppError(404, "not_found", "session not found");
     const cloneId = randomUUID3();
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status,snapshot_json) VALUES (?,?,?,'queued',?)").run(
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`
+    ).run(
       cloneId,
       source.council_id,
       source.topic,
-      source.snapshot_json
+      source.snapshot_json,
+      source.workspace_path,
+      source.workspace_files_json
     );
     sessions.startSession(cloneId, source.council_id, source.topic);
     reply.code(202);
@@ -2491,13 +3078,19 @@ function registerSessionRoutes(app, deps) {
   });
   app.post("/api/v1/sessions/:id/rerun", async (req, reply) => {
     const { id } = req.params;
-    const source = db.prepare("SELECT council_id, topic FROM sessions WHERE id=?").get(id);
+    const source = db.prepare("SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?").get(id);
     if (!source) throw new AppError(404, "not_found", "session not found");
     const rerunId = randomUUID3();
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status) VALUES (?,?,?,'queued')").run(
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`
+    ).run(
       rerunId,
       source.council_id,
-      source.topic
+      source.topic,
+      source.snapshot_json,
+      source.workspace_path,
+      source.workspace_files_json
     );
     sessions.startSession(rerunId, source.council_id, source.topic);
     reply.code(202);
@@ -2835,6 +3428,20 @@ function makeRunnerDbHelpers(db) {
       ).get(modelId);
       return row ?? null;
     },
+    loadWorkspace(sessionId) {
+      const row = db.prepare("SELECT workspace_path, workspace_files_json FROM sessions WHERE id=?").get(sessionId);
+      if (!row?.workspace_path) return null;
+      let files = [];
+      if (row.workspace_files_json) {
+        try {
+          const parsed = JSON.parse(row.workspace_files_json);
+          if (Array.isArray(parsed)) files = parsed.filter((x) => typeof x === "string");
+        } catch {
+          files = [];
+        }
+      }
+      return { root: row.workspace_path, files };
+    },
     updateSessionStatus(sessionId, status, error) {
       if (status === "running") {
         db.prepare(
@@ -2849,7 +3456,7 @@ function makeRunnerDbHelpers(db) {
   };
 }
 async function buildApp(deps) {
-  const app = Fastify({ logger: { level: deps.config.logLevel } });
+  const app = Fastify({ logger: { level: deps.config.logLevel }, ignoreTrailingSlash: true });
   const { registerErrorHandlers: registerErrorHandlers2 } = await Promise.resolve().then(() => (init_errors(), errors_exports));
   registerErrorHandlers2(app);
   app.get("/api/v1/health", async () => ({ ok: true, version: VERSION, instanceId: INSTANCE_ID }));
@@ -2894,10 +3501,10 @@ var env_exports = {};
 __export(env_exports, {
   loadEnvFile: () => loadEnvFile
 });
-import path from "node:path";
+import path2 from "node:path";
 function loadEnvFile(cwd = process.cwd()) {
   const override = process.env.OPEN_COUNCIL_ENV_FILE;
-  const file = override ? path.resolve(cwd, override) : path.join(cwd, ".env");
+  const file = override ? path2.resolve(cwd, override) : path2.join(cwd, ".env");
   try {
     process.loadEnvFile(file);
     return file;
@@ -2918,25 +3525,25 @@ __export(config_exports2, {
   loadConfig: () => loadConfig
 });
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path2 from "node:path";
+import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import path3 from "node:path";
 import { z as z2 } from "zod";
 function loadConfig(env = process.env) {
   const parsed = envSchema.parse(env);
   const isAbsolute = parsed.DATABASE_PATH.startsWith("/");
   let databasePath = parsed.DATABASE_PATH;
   if (!isAbsolute && !parsed.DATABASE_PATH.includes(process.cwd())) {
-    databasePath = path2.join(process.cwd(), parsed.DATABASE_PATH);
+    databasePath = path3.join(process.cwd(), parsed.DATABASE_PATH);
   }
-  const dataDir = path2.dirname(databasePath);
+  const dataDir = path3.dirname(databasePath);
   mkdirSync(dataDir, { recursive: true });
   let secretKey = parsed.OPEN_COUNCIL_SECRET_KEY;
   let hasDurableSecret = true;
   if (!secretKey) {
-    const keyFile = path2.join(dataDir, ".secret_key");
-    if (existsSync(keyFile)) {
+    const keyFile = path3.join(dataDir, ".secret_key");
+    if (existsSync2(keyFile)) {
       try {
-        const stored = readFileSync(keyFile, "utf8").trim();
+        const stored = readFileSync2(keyFile, "utf8").trim();
         if (stored && stored.length >= 8) {
           secretKey = stored;
         }
@@ -3214,6 +3821,68 @@ CREATE TABLE council_members (
 INSERT INTO council_members SELECT * FROM council_members_v4;
 DROP TABLE council_members_v4;
 `
+      },
+      {
+        version: 5,
+        name: "council-strategies-swarm-critique",
+        sql: `
+ALTER TABLE council_members RENAME TO council_members_v5;
+ALTER TABLE councils RENAME TO councils_v5;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate','swarm','critique')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v5;
+DROP TABLE councils_v5;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v5;
+DROP TABLE council_members_v5;
+`
+      },
+      {
+        version: 6,
+        name: "council-strategies-coding",
+        sql: `
+ALTER TABLE council_members RENAME TO council_members_v6;
+ALTER TABLE councils RENAME TO councils_v6;
+CREATE TABLE councils (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN ('round_robin','debate','swarm','critique','review','architect','red_team')),
+  rounds INTEGER NOT NULL DEFAULT 1 CHECK (rounds BETWEEN 1 AND 100),
+  moderator_member_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT INTO councils SELECT * FROM councils_v6;
+DROP TABLE councils_v6;
+CREATE TABLE council_members (
+  council_id TEXT NOT NULL REFERENCES councils(id) ON DELETE CASCADE,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (council_id, member_id)
+);
+INSERT INTO council_members SELECT * FROM council_members_v6;
+DROP TABLE council_members_v6;
+`
+      },
+      {
+        version: 7,
+        name: "session-workspace",
+        sql: `
+ALTER TABLE sessions ADD COLUMN workspace_path TEXT;
+ALTER TABLE sessions ADD COLUMN workspace_files_json TEXT;
+`
       }
     ];
   }
@@ -3411,10 +4080,100 @@ var init_session_manager = __esm({
   }
 });
 
+// apps/server/src/web-ui.ts
+var web_ui_exports = {};
+__export(web_ui_exports, {
+  isApiUrl: () => isApiUrl,
+  registerWebUi: () => registerWebUi,
+  resolvePublicFile: () => resolvePublicFile
+});
+import { createReadStream, existsSync as existsSync3, statSync as statSync2 } from "node:fs";
+import path4 from "node:path";
+function isApiUrl(url) {
+  const pathname = url.split("?")[0] || "";
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+function resolvePublicFile(webOutDir, urlPath) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent((urlPath.split("?")[0] || "/").replace(/^\/+/, ""));
+  } catch {
+    return null;
+  }
+  if (decoded.includes("\0")) return null;
+  const root = path4.resolve(webOutDir);
+  const resolved = path4.resolve(root, decoded);
+  const prefix = root.endsWith(path4.sep) ? root : root + path4.sep;
+  if (resolved !== root && !resolved.startsWith(prefix)) return null;
+  return resolved;
+}
+function sendExistingFile(reply, webOutDir, abs) {
+  if (!existsSync3(abs) || !statSync2(abs).isFile()) return false;
+  const rel = path4.relative(webOutDir, abs);
+  if (abs.endsWith(".html")) {
+    reply.type("text/html; charset=utf-8");
+  }
+  reply.sendFile(rel);
+  return true;
+}
+async function registerWebUi(app, webOutDir) {
+  if (!existsSync3(webOutDir) || !statSync2(webOutDir).isDirectory()) {
+    app.setNotFoundHandler((_req, reply) => {
+      reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
+    });
+    return false;
+  }
+  const staticHandler = (await import("@fastify/static")).default;
+  await app.register(staticHandler, {
+    root: webOutDir,
+    prefix: "/",
+    wildcard: false,
+    serve: false,
+    decorateReply: true,
+    index: ["index.html"]
+  });
+  app.setNotFoundHandler((req, reply) => {
+    if (isApiUrl(req.url)) {
+      const pathname = req.url.split("?")[0] || req.url;
+      reply.status(404).send({
+        error: {
+          code: "not_found",
+          message: `no such API route: ${req.method} ${pathname}. If you just updated OpenCouncil, restart the process.`
+        }
+      });
+      return;
+    }
+    const rawPath = req.url.split("?")[0] || "/";
+    const direct = resolvePublicFile(webOutDir, rawPath);
+    if (direct && sendExistingFile(reply, webOutDir, direct)) return;
+    const dirIndex = resolvePublicFile(webOutDir, path4.posix.join(rawPath, "index.html"));
+    if (dirIndex && sendExistingFile(reply, webOutDir, dirIndex)) return;
+    const htmlNamed = resolvePublicFile(webOutDir, `${rawPath.replace(/\/+$/, "")}.html`);
+    if (htmlNamed && sendExistingFile(reply, webOutDir, htmlNamed)) return;
+    const rootIndex = path4.join(webOutDir, "index.html");
+    if (existsSync3(rootIndex)) {
+      reply.type("text/html; charset=utf-8").send(createReadStream(rootIndex));
+      return;
+    }
+    const fallback = path4.join(webOutDir, "404.html");
+    if (existsSync3(fallback)) {
+      reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
+      return;
+    }
+    reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
+  });
+  return true;
+}
+var init_web_ui = __esm({
+  "apps/server/src/web-ui.ts"() {
+    "use strict";
+  }
+});
+
 // apps/server/src/cli.ts
 init_crypto();
-import path3 from "node:path";
-import { createReadStream, existsSync as existsSync2, statSync } from "node:fs";
+import path5 from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID as randomUUID7 } from "node:crypto";
 function parseArgs(argv) {
@@ -3706,7 +4465,7 @@ function runHeadless(args, db, packageRoot) {
         node: process.versions.node,
         database: "ok",
         migrations: Number(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n) > 0 ? "ok" : "missing",
-        staticAssets: existsSync2(path3.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync2(path3.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
+        staticAssets: existsSync4(path5.join(packageRoot, "apps", "server", "dist", "public", "index.html")) || existsSync4(path5.join(packageRoot, "apps", "web", "out", "index.html")) ? "ok" : "missing",
         vault: process.env.OPEN_COUNCIL_SECRET_KEY ? "durable-key-configured" : "ephemeral-key-warning"
       },
       args.json
@@ -3745,7 +4504,8 @@ async function runLocalCouncil(args, db) {
     insertMessage: helpers.insertMessage,
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
-    updateSessionStatus: helpers.updateSessionStatus
+    updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace
   });
   const unsubscribe = bus.subscribe(sessionId, (event) => console.log(JSON.stringify(event)));
   try {
@@ -3781,11 +4541,11 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  const here = path3.dirname(fileURLToPath(import.meta.url));
-  const packageRoot = path3.resolve(here, "..", "..", "..");
-  const packagedWebDir = path3.join(here, "public");
-  const sourceWebDir = path3.join(packageRoot, "apps", "web", "out");
-  const webOutDir = existsSync2(packagedWebDir) ? packagedWebDir : sourceWebDir;
+  const here = path5.dirname(fileURLToPath(import.meta.url));
+  const packageRoot = path5.resolve(here, "..", "..", "..");
+  const packagedWebDir = path5.join(here, "public");
+  const sourceWebDir = path5.join(packageRoot, "apps", "web", "out");
+  const webOutDir = existsSync4(packagedWebDir) ? packagedWebDir : sourceWebDir;
   if (args.host !== void 0) process.env.HOST = args.host;
   if (args.port !== void 0) process.env.PORT = String(args.port);
   if (args.databasePath) process.env.DATABASE_PATH = args.databasePath;
@@ -3832,61 +4592,17 @@ async function main() {
     insertMessage: helpers.insertMessage,
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
-    updateSessionStatus: helpers.updateSessionStatus
+    updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace
   });
   const sessions = new SessionManager2(bus, runner);
   const app = await buildApp2({ config, db, bus, sessions });
-  let uiReady = false;
-  if (existsSync2(webOutDir)) {
-    const staticHandler = (await import("@fastify/static")).default;
-    await app.register(staticHandler, {
-      root: webOutDir,
-      prefix: "/",
-      wildcard: true,
-      index: ["index.html"]
-    });
-    app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith("/api/") || req.url === "/api") {
-        reply.status(404).send({ error: { code: "not_found", message: "no such API route" } });
-        return;
-      }
-      const rawPath = req.url.split("?")[0] || "/";
-      const urlPath = decodeURIComponent(rawPath);
-      const fileCandidate = path3.join(webOutDir, urlPath);
-      if (existsSync2(fileCandidate) && statSync(fileCandidate).isFile()) {
-        reply.sendFile(path3.relative(webOutDir, fileCandidate));
-        return;
-      }
-      const dirIndexCandidate = path3.join(webOutDir, urlPath, "index.html");
-      if (existsSync2(dirIndexCandidate)) {
-        reply.type("text/html; charset=utf-8").send(createReadStream(dirIndexCandidate));
-        return;
-      }
-      const htmlCandidate = path3.join(webOutDir, `${urlPath}.html`);
-      if (existsSync2(htmlCandidate)) {
-        reply.type("text/html; charset=utf-8").send(createReadStream(htmlCandidate));
-        return;
-      }
-      const rootIndex = path3.join(webOutDir, "index.html");
-      if (existsSync2(rootIndex)) {
-        reply.type("text/html; charset=utf-8").send(createReadStream(rootIndex));
-        return;
-      }
-      const fallback = path3.join(webOutDir, "404.html");
-      if (existsSync2(fallback)) {
-        reply.status(404).type("text/html; charset=utf-8").send(createReadStream(fallback));
-      } else {
-        reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
-      }
-    });
-    uiReady = true;
-  } else {
+  const { registerWebUi: registerWebUi2 } = await Promise.resolve().then(() => (init_web_ui(), web_ui_exports));
+  const uiReady = await registerWebUi2(app, webOutDir);
+  if (!uiReady) {
     console.warn(
       `[opencouncil] UI not found at ${webOutDir}. Build it with \`npm run build\`. API remains served.`
     );
-    app.setNotFoundHandler((_req, reply) => {
-      reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
-    });
   }
   await app.listen({ host: config.host, port: config.port });
   console.log(`[opencouncil] API  \u2192 http://${config.host}:${config.port}/api/v1`);

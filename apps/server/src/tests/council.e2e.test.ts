@@ -1,4 +1,7 @@
 /** End-to-end: full mock council deliberation through the engine + REST API. */
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { setVaultKeyForTests } from '../vault/crypto.js'
 import { loadConfig } from '../config.js'
@@ -50,6 +53,7 @@ beforeAll(async () => {
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace,
   })
   sessions = new SessionManager(bus, runner)
   app = await buildApp({ config, db, bus, sessions })
@@ -80,6 +84,43 @@ describe('council end-to-end', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().supported).toBe(false)
     expect(res.json().models).toEqual([])
+    const slashed = await app.inject({ method: 'GET', url: `/api/v1/providers/${provider.id}/catalog/` })
+    expect(slashed.statusCode).toBe(200)
+    const posted = await app.inject({ method: 'POST', url: `/api/v1/providers/${provider.id}/discover-models` })
+    expect(posted.statusCode).toBe(200)
+    expect(posted.json().supported).toBe(false)
+  })
+
+  it('attaches a local workspace and surfaces it on the session', async () => {
+    const council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }
+    const ws = path.join(os.tmpdir(), `oc-e2e-ws-${Date.now()}`)
+    mkdirSync(ws)
+    writeFileSync(path.join(ws, 'README.md'), '# attached\n')
+    try {
+      const preview = await app.inject({
+        method: 'POST',
+        url: '/api/v1/workspace/preview',
+        payload: { path: ws },
+      })
+      expect(preview.statusCode).toBe(200)
+      expect(preview.json().fileCount).toBeGreaterThan(0)
+
+      const create = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { councilId: council.id, topic: 'What does the attached README say?', workspacePath: ws },
+      })
+      expect(create.statusCode).toBe(202)
+      expect(create.json().workspacePath).toBe(ws)
+      const sessionId = create.json().id
+      const status = await waitForSessionCompletion(sessionId)
+      expect(status).toBe('completed')
+      const snap = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}` })
+      const names = snap.json().messages.map((m: { memberName: string }) => m.memberName)
+      expect(names).toContain('Workspace')
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
   })
 
   it('health endpoint responds', async () => {

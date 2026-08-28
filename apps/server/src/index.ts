@@ -43,6 +43,7 @@ async function main(): Promise<void> {
     loadCouncil: helpers.loadCouncil,
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
+    loadWorkspace: helpers.loadWorkspace,
   })
   const sessions = new SessionManager(bus, runner)
 

@@ -23,6 +23,19 @@ apps/web/.next/
 apps/web/out/
 *.tsbuildinfo
 *.tgz
+# tsc dumps if someone runs `tsc -p apps/server`. Only cli.js, index.js, and
+# public/ are the shipped artifacts from esbuild + the Next export.
+apps/server/dist/*.d.ts
+apps/server/dist/*.map
+apps/server/dist/app.js
+apps/server/dist/config.js
+apps/server/dist/db/
+apps/server/dist/engine/
+apps/server/dist/lib/
+apps/server/dist/providers/
+apps/server/dist/routes/
+apps/server/dist/vault/
+apps/server/dist/types/
 
 # testing / coverage
 coverage/

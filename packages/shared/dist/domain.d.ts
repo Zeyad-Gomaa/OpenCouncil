@@ -48,7 +48,8 @@ export interface MemberDTO {
     modelName?: string | null;
     providerName?: string | null;
 }
-export type StrategyKind = 'round_robin' | 'debate';
+export type StrategyKind = 'round_robin' | 'debate' | 'swarm' | 'critique' | 'review' | 'architect' | 'red_team';
+export declare const STRATEGY_LABELS: Record<StrategyKind, string>;
 export interface CouncilDTO {
     id: string;
     name: string;
@@ -108,6 +109,8 @@ export interface SessionDTO {
     completedAt: string | null;
     messageCount?: number;
     moderatorMemberId?: string | null;
+    workspacePath?: string | null;
+    workspaceFiles?: string[];
     createdAt: string;
 }
 export interface ActivityTotals {

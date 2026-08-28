@@ -8,6 +8,7 @@ import {
   sessionCreateSchema,
   sessionExtendSchema,
   sessionInterveneSchema,
+  workspacePreviewSchema,
 } from '@opencouncil/shared'
 import type { SessionBus } from '../engine/bus.js'
 import type { SessionManager } from '../engine/session-manager.js'
@@ -21,6 +22,19 @@ export interface SessionRouteDeps {
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const { db, bus, sessions } = deps
+
+  app.post('/api/v1/workspace/preview', async (req) => {
+    const body = workspacePreviewSchema.parse(req.body)
+    const { buildWorkspaceBriefing, listTree, normalizeWorkspace } = await import('../engine/workspace.js')
+    try {
+      const ref = normalizeWorkspace(body.path, body.files ?? [])
+      const tree = listTree(ref.root).slice(0, 80)
+      const brief = buildWorkspaceBriefing(ref)
+      return { ok: true, root: ref.root, files: ref.files, tree, fileCount: tree.length, preview: brief.slice(0, 2500) }
+    } catch (err) {
+      throw new AppError(400, 'workspace_invalid', err instanceof Error ? err.message : String(err))
+    }
+  })
 
   function snapshotForCouncil(councilId: string): string {
     const council = db
@@ -93,14 +107,25 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const council = db.prepare('SELECT id FROM councils WHERE id = ?').get(body.councilId)
     if (!council) throw new AppError(404, 'not_found', 'council not found')
 
+    let workspacePath: string | null = null
+    let workspaceFilesJson: string | null = null
+    if (body.workspacePath?.trim()) {
+      try {
+        const { normalizeWorkspace } = await import('../engine/workspace.js')
+        const ref = normalizeWorkspace(body.workspacePath, body.workspaceFiles ?? [])
+        workspacePath = ref.root
+        workspaceFilesJson = ref.files.length ? JSON.stringify(ref.files) : null
+      } catch (err) {
+        throw new AppError(400, 'workspace_invalid', err instanceof Error ? err.message : String(err))
+      }
+    }
+
     const id = randomUUID()
     const snapshot = snapshotForCouncil(body.councilId)
-    db.prepare(`INSERT INTO sessions (id, council_id, topic, status, snapshot_json) VALUES (?, ?, ?, 'queued', ?)`).run(
-      id,
-      body.councilId,
-      body.topic,
-      snapshot,
-    )
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+    ).run(id, body.councilId, body.topic, snapshot, workspacePath, workspaceFilesJson)
     logActivity(db, 'session.started', { sessionId: id, councilId: body.councilId })
     sessions.startSession(id, body.councilId, body.topic)
     reply.code(202)
@@ -224,15 +249,29 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 
   app.post('/api/v1/sessions/:id/clone', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const source = db.prepare('SELECT council_id, topic, snapshot_json FROM sessions WHERE id=?').get(id) as
-      { council_id: string; topic: string; snapshot_json: string | null } | undefined
+    const source = db
+      .prepare('SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?')
+      .get(id) as
+      | {
+          council_id: string
+          topic: string
+          snapshot_json: string | null
+          workspace_path: string | null
+          workspace_files_json: string | null
+        }
+      | undefined
     if (!source) throw new AppError(404, 'not_found', 'session not found')
     const cloneId = randomUUID()
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status,snapshot_json) VALUES (?,?,?,'queued',?)").run(
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+    ).run(
       cloneId,
       source.council_id,
       source.topic,
       source.snapshot_json,
+      source.workspace_path,
+      source.workspace_files_json,
     )
     sessions.startSession(cloneId, source.council_id, source.topic)
     reply.code(202)
@@ -241,14 +280,29 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 
   app.post('/api/v1/sessions/:id/rerun', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const source = db.prepare('SELECT council_id, topic FROM sessions WHERE id=?').get(id) as
-      { council_id: string; topic: string } | undefined
+    const source = db
+      .prepare('SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?')
+      .get(id) as
+      | {
+          council_id: string
+          topic: string
+          snapshot_json: string | null
+          workspace_path: string | null
+          workspace_files_json: string | null
+        }
+      | undefined
     if (!source) throw new AppError(404, 'not_found', 'session not found')
     const rerunId = randomUUID()
-    db.prepare("INSERT INTO sessions (id,council_id,topic,status) VALUES (?,?,?,'queued')").run(
+    db.prepare(
+      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+    ).run(
       rerunId,
       source.council_id,
       source.topic,
+      source.snapshot_json,
+      source.workspace_path,
+      source.workspace_files_json,
     )
     sessions.startSession(rerunId, source.council_id, source.topic)
     reply.code(202)

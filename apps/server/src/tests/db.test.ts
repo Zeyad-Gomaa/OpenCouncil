@@ -35,6 +35,12 @@ describe('migrations', () => {
   it('is idempotent', () => {
     expect(() => migrate(db)).not.toThrow()
   })
+
+  it('adds workspace columns on sessions', () => {
+    const cols = (db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map((c) => c.name)
+    expect(cols).toContain('workspace_path')
+    expect(cols).toContain('workspace_files_json')
+  })
 })
 
 describe('seedDemoCouncil', () => {
@@ -95,7 +101,7 @@ describe('restart recovery', () => {
   it('allows councils to be created and updated with up to 100 rounds', () => {
     expect(() => {
       db.prepare(
-        "INSERT INTO councils (id, name, description, strategy, rounds) VALUES ('c-100', 'Big Debate', '', 'debate', 100)",
+        "INSERT INTO councils (id, name, description, strategy, rounds) VALUES ('c-100', 'Big Debate', '', 'review', 100)",
       ).run()
     }).not.toThrow()
     const row = db.prepare('SELECT rounds FROM councils WHERE id = ?').get('c-100') as { rounds: number }

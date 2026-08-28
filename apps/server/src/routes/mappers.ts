@@ -149,7 +149,18 @@ export function sessionToDTO(r: {
   created_at: string
   council_name?: string
   message_count?: number
+  workspace_path?: string | null
+  workspace_files_json?: string | null
 }): SessionDTO {
+  let workspaceFiles: string[] | undefined
+  if (r.workspace_files_json) {
+    try {
+      const parsed = JSON.parse(r.workspace_files_json) as unknown
+      if (Array.isArray(parsed)) workspaceFiles = parsed.filter((x): x is string => typeof x === 'string')
+    } catch {
+      workspaceFiles = undefined
+    }
+  }
   return {
     id: r.id,
     councilId: r.council_id,
@@ -160,6 +171,8 @@ export function sessionToDTO(r: {
     startedAt: r.started_at,
     completedAt: r.completed_at,
     messageCount: r.message_count,
+    workspacePath: r.workspace_path ?? null,
+    workspaceFiles,
     createdAt: r.created_at,
   }
 }
