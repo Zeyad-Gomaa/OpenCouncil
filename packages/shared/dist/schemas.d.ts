@@ -93,6 +93,79 @@ export declare const modelUpdateSchema: z.ZodObject<Omit<{
     inputPerMTokUsd?: number | null | undefined;
     outputPerMTokUsd?: number | null | undefined;
 }>;
+export declare const modelBatchUpdateSchema: z.ZodObject<{
+    modelIds: z.ZodArray<z.ZodString, "many">;
+    patch: z.ZodEffects<z.ZodObject<Omit<{
+        providerId: z.ZodOptional<z.ZodString>;
+        modelId: z.ZodOptional<z.ZodString>;
+        displayName: z.ZodOptional<z.ZodString>;
+        contextWindow: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
+        inputPerMTokUsd: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
+        outputPerMTokUsd: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
+        enabled: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
+    }, "providerId">, "strip", z.ZodTypeAny, {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }, {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }>, {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }, {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    }>;
+}, "strip", z.ZodTypeAny, {
+    modelIds: string[];
+    patch: {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    };
+}, {
+    modelIds: string[];
+    patch: {
+        enabled?: boolean | undefined;
+        modelId?: string | undefined;
+        displayName?: string | undefined;
+        contextWindow?: number | null | undefined;
+        inputPerMTokUsd?: number | null | undefined;
+        outputPerMTokUsd?: number | null | undefined;
+    };
+}>;
+export declare const memberBatchModelSchema: z.ZodObject<{
+    memberIds: z.ZodArray<z.ZodString, "many">;
+    modelId: z.ZodString;
+    maxTokens: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+}, "strip", z.ZodTypeAny, {
+    modelId: string;
+    memberIds: string[];
+    maxTokens?: number | null | undefined;
+}, {
+    modelId: string;
+    memberIds: string[];
+    maxTokens?: number | null | undefined;
+}>;
 export declare const catalogEnrollSchema: z.ZodObject<{
     modelIds: z.ZodArray<z.ZodString, "many">;
 }, "strip", z.ZodTypeAny, {
@@ -112,17 +185,17 @@ export declare const memberCreateSchema: z.ZodObject<{
     name: string;
     modelId: string;
     enabled?: boolean | undefined;
+    maxTokens?: number | null | undefined;
     systemPrompt?: string | null | undefined;
     temperature?: number | undefined;
-    maxTokens?: number | null | undefined;
     avatarColor?: string | undefined;
 }, {
     name: string;
     modelId: string;
     enabled?: boolean | undefined;
+    maxTokens?: number | null | undefined;
     systemPrompt?: string | null | undefined;
     temperature?: number | undefined;
-    maxTokens?: number | null | undefined;
     avatarColor?: string | undefined;
 }>;
 export declare const memberUpdateSchema: z.ZodObject<{
@@ -137,17 +210,17 @@ export declare const memberUpdateSchema: z.ZodObject<{
     name?: string | undefined;
     enabled?: boolean | undefined;
     modelId?: string | undefined;
+    maxTokens?: number | null | undefined;
     systemPrompt?: string | null | undefined;
     temperature?: number | undefined;
-    maxTokens?: number | null | undefined;
     avatarColor?: string | undefined;
 }, {
     name?: string | undefined;
     enabled?: boolean | undefined;
     modelId?: string | undefined;
+    maxTokens?: number | null | undefined;
     systemPrompt?: string | null | undefined;
     temperature?: number | undefined;
-    maxTokens?: number | null | undefined;
     avatarColor?: string | undefined;
 }>;
 export declare const strategyKindSchema: z.ZodEnum<["round_robin", "debate", "swarm", "critique", "review", "architect", "red_team"]>;
@@ -160,30 +233,30 @@ export declare const councilCreateSchema: z.ZodEffects<z.ZodObject<{
     moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     name: string;
+    memberIds: string[];
     strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
-    memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name: string;
+    memberIds: string[];
     strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
-    memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }>, {
     name: string;
+    memberIds: string[];
     strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
-    memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name: string;
+    memberIds: string[];
     strategy: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team";
     rounds: number;
-    memberIds: string[];
     description?: string | null | undefined;
     moderatorMemberId?: string | null | undefined;
 }>;
@@ -196,31 +269,31 @@ export declare const councilUpdateSchema: z.ZodEffects<z.ZodObject<{
     moderatorMemberId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     name?: string | undefined;
+    memberIds?: string[] | undefined;
     description?: string | null | undefined;
     strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
-    memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name?: string | undefined;
+    memberIds?: string[] | undefined;
     description?: string | null | undefined;
     strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
-    memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }>, {
     name?: string | undefined;
+    memberIds?: string[] | undefined;
     description?: string | null | undefined;
     strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
-    memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }, {
     name?: string | undefined;
+    memberIds?: string[] | undefined;
     description?: string | null | undefined;
     strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
     rounds?: number | undefined;
-    memberIds?: string[] | undefined;
     moderatorMemberId?: string | null | undefined;
 }>;
 export declare const sessionCreateSchema: z.ZodObject<{
@@ -351,18 +424,18 @@ export declare const configImportSchema: z.ZodObject<{
         id: string;
         enabled?: boolean | undefined;
         modelId?: string | null | undefined;
+        maxTokens?: number | null | undefined;
         systemPrompt?: string | null | undefined;
         temperature?: number | undefined;
-        maxTokens?: number | null | undefined;
         avatarColor?: string | undefined;
     }, {
         name: string;
         id: string;
         enabled?: boolean | undefined;
         modelId?: string | null | undefined;
+        maxTokens?: number | null | undefined;
         systemPrompt?: string | null | undefined;
         temperature?: number | undefined;
-        maxTokens?: number | null | undefined;
         avatarColor?: string | undefined;
     }>, "many">;
     councils: z.ZodArray<z.ZodObject<{
@@ -376,18 +449,18 @@ export declare const configImportSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         name: string;
         id: string;
+        memberIds?: string[] | undefined;
         description?: string | null | undefined;
         strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
-        memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
     }, {
         name: string;
         id: string;
+        memberIds?: string[] | undefined;
         description?: string | null | undefined;
         strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
-        memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
@@ -414,18 +487,18 @@ export declare const configImportSchema: z.ZodObject<{
         id: string;
         enabled?: boolean | undefined;
         modelId?: string | null | undefined;
+        maxTokens?: number | null | undefined;
         systemPrompt?: string | null | undefined;
         temperature?: number | undefined;
-        maxTokens?: number | null | undefined;
         avatarColor?: string | undefined;
     }[];
     councils: {
         name: string;
         id: string;
+        memberIds?: string[] | undefined;
         description?: string | null | undefined;
         strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
-        memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
     }[];
     version?: 1 | undefined;
@@ -453,18 +526,18 @@ export declare const configImportSchema: z.ZodObject<{
         id: string;
         enabled?: boolean | undefined;
         modelId?: string | null | undefined;
+        maxTokens?: number | null | undefined;
         systemPrompt?: string | null | undefined;
         temperature?: number | undefined;
-        maxTokens?: number | null | undefined;
         avatarColor?: string | undefined;
     }[];
     councils: {
         name: string;
         id: string;
+        memberIds?: string[] | undefined;
         description?: string | null | undefined;
         strategy?: "round_robin" | "debate" | "swarm" | "critique" | "review" | "architect" | "red_team" | undefined;
         rounds?: number | undefined;
-        memberIds?: string[] | undefined;
         moderatorMemberId?: string | null | undefined;
     }[];
     version?: 1 | undefined;

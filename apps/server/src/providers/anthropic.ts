@@ -4,8 +4,10 @@ import { httpJson } from '../lib/http.js'
 import type { ChatCallOpts, ChatResult, ProviderAdapter } from './types.js'
 
 interface AnthropicResponse {
+  id?: string
   content?: { type: string; text?: string }[]
   usage?: { input_tokens?: number; output_tokens?: number }
+  stop_reason?: string | null
 }
 
 export const anthropicAdapter: ProviderAdapter = {
@@ -42,6 +44,8 @@ export const anthropicAdapter: ProviderAdapter = {
         .join(''),
       promptTokens: data.usage?.input_tokens ?? null,
       completionTokens: data.usage?.output_tokens ?? null,
+      finishReason: data.stop_reason ?? null,
+      responseId: data.id ?? null,
     }
   },
 }

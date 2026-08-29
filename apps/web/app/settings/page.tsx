@@ -319,6 +319,8 @@ function ModelsTab({
   const [catalog, setCatalog] = useState<ProviderCatalogDTO | null>(null)
   const [catalogQuery, setCatalogQuery] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [batchBusy, setBatchBusy] = useState(false)
 
   const filtered = models.filter((m) => {
     if (providerFilter && m.providerId !== providerFilter) return false
@@ -433,6 +435,20 @@ function ModelsTab({
     return m.displayName.toLowerCase().includes(q) || m.modelId.toLowerCase().includes(q)
   })
 
+  async function batchSetEnabled(enabled: boolean) {
+    if (!selectedIds.length) return
+    setBatchBusy(true)
+    try {
+      await apiSend('/models/batch', 'PATCH', { modelIds: selectedIds, patch: { enabled } })
+      setSelectedIds([])
+      reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 8 }}>
@@ -462,6 +478,28 @@ function ModelsTab({
         onFilterToggle={(id) => setProviderFilter((cur) => (cur === id ? null : id))}
       />
 
+      {filtered.length > 0 && (
+        <div className="input-hint" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}>
+          <button onClick={() => setSelectedIds(filtered.map((model) => model.id))}>
+            Select filtered ({filtered.length})
+          </button>
+          <button onClick={() => setSelectedIds([])} disabled={!selectedIds.length}>
+            Clear
+          </button>
+          {selectedIds.length > 0 && (
+            <>
+              <span>{selectedIds.length} selected</span>
+              <button disabled={batchBusy} onClick={() => batchSetEnabled(true)}>
+                Enable
+              </button>
+              <button disabled={batchBusy} onClick={() => batchSetEnabled(false)}>
+                Disable
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="empty">
           <div className="empty-icon">◇</div>
@@ -472,7 +510,19 @@ function ModelsTab({
           {filtered.map((m) => {
             const prov = providers.find((p) => p.id === m.providerId)
             return (
-              <ModelCard key={m.id} model={m} providerName={prov?.name} onDelete={handleDelete} onEdit={openEdit} />
+              <div key={m.id} style={{ position: 'relative' }}>
+                <label style={{ position: 'absolute', top: 12, right: 12, zIndex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(m.id)}
+                    onChange={() =>
+                      setSelectedIds((ids) => (ids.includes(m.id) ? ids.filter((id) => id !== m.id) : [...ids, m.id]))
+                    }
+                    aria-label={`Select ${m.displayName}`}
+                  />
+                </label>
+                <ModelCard model={m} providerName={prov?.name} onDelete={handleDelete} onEdit={openEdit} />
+              </div>
             )
           })}
         </div>
@@ -609,6 +659,28 @@ function MembersTab({ members, models, reload }: { members: MemberDTO[]; models:
   const [color, setColor] = useState(COLORS[0]!)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [batchModelId, setBatchModelId] = useState('')
+  const [batchMaxTokens, setBatchMaxTokens] = useState('')
+  const [batchBusy, setBatchBusy] = useState(false)
+
+  async function applyBatchModel() {
+    if (!selectedIds.length || !batchModelId) return
+    setBatchBusy(true)
+    try {
+      await apiSend('/members/batch-model', 'PATCH', {
+        memberIds: selectedIds,
+        modelId: batchModelId,
+        ...(batchMaxTokens ? { maxTokens: Number(batchMaxTokens) } : {}),
+      })
+      setSelectedIds([])
+      reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
   function openAdd() {
     setEditId(null)
     setName('')
@@ -671,6 +743,46 @@ function MembersTab({ members, models, reload }: { members: MemberDTO[]; models:
         </button>
       </div>
 
+      {members.length > 0 && (
+        <div className="input-hint" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <button onClick={() => setSelectedIds(members.map((member) => member.id))}>Select all</button>
+          <button onClick={() => setSelectedIds([])} disabled={!selectedIds.length}>
+            Clear
+          </button>
+          {selectedIds.length > 0 && (
+            <>
+              <span>{selectedIds.length} selected</span>
+              <select
+                aria-label="Batch target model"
+                value={batchModelId}
+                onChange={(event) => setBatchModelId(event.target.value)}
+              >
+                <option value="">Choose target model…</option>
+                {models
+                  .filter((model) => model.enabled)
+                  .map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.displayName}
+                    </option>
+                  ))}
+              </select>
+              <input
+                aria-label="Batch max output tokens"
+                value={batchMaxTokens}
+                onChange={(event) => setBatchMaxTokens(event.target.value)}
+                placeholder="Max tokens (optional)"
+                type="number"
+                min="1"
+                max="200000"
+              />
+              <button disabled={batchBusy || !batchModelId} onClick={applyBatchModel}>
+                Apply model
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {members.length === 0 ? (
         <div className="empty">
           <div className="empty-icon">◈</div>
@@ -679,7 +791,19 @@ function MembersTab({ members, models, reload }: { members: MemberDTO[]; models:
       ) : (
         <div className="grid-auto">
           {members.map((m) => (
-            <MemberCard key={m.id} member={m} onDelete={handleDelete} onEdit={openEdit} />
+            <div key={m.id} style={{ position: 'relative' }}>
+              <label style={{ position: 'absolute', top: 12, right: 12, zIndex: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(m.id)}
+                  onChange={() =>
+                    setSelectedIds((ids) => (ids.includes(m.id) ? ids.filter((id) => id !== m.id) : [...ids, m.id]))
+                  }
+                  aria-label={`Select ${m.name}`}
+                />
+              </label>
+              <MemberCard member={m} onDelete={handleDelete} onEdit={openEdit} />
+            </div>
           ))}
         </div>
       )}

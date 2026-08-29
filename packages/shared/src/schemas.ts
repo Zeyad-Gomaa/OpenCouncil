@@ -33,6 +33,17 @@ export const modelCreateSchema = z.object({
 
 export const modelUpdateSchema = modelCreateSchema.partial().omit({ providerId: true })
 
+export const modelBatchUpdateSchema = z.object({
+  modelIds: z.array(z.string().uuid()).min(1).max(500),
+  patch: modelUpdateSchema.refine((value) => Object.keys(value).length > 0, 'patch must change at least one field'),
+})
+
+export const memberBatchModelSchema = z.object({
+  memberIds: z.array(z.string().uuid()).min(1).max(500),
+  modelId: z.string().uuid(),
+  maxTokens: z.number().int().positive().max(200_000).nullish(),
+})
+
 export const catalogEnrollSchema = z.object({
   modelIds: z.array(z.string().min(1).max(200)).min(1).max(500),
 })

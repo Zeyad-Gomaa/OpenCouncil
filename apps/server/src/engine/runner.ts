@@ -2,7 +2,7 @@
 import type { ConsensusResult, MemberDTO, StrategyKind } from '@opencouncil/shared'
 import { decryptSecret } from '../vault/crypto.js'
 import { getAdapter } from '../providers/registry.js'
-import type { ChatMessage } from '../providers/types.js'
+import type { ChatMessage, ChatResult } from '../providers/types.js'
 import { fitMessages } from './context-budgeter.js'
 import { Semaphore, withRetry } from './execution-policy.js'
 import { AuthError, ProviderHttpError, RateLimitError, TimeoutError } from '../lib/http.js'
@@ -11,7 +11,7 @@ import { buildMemberMessages } from './prompts.js'
 import { aggregateConsensus, peerReviewMessages } from './consensus.js'
 import { SpendingBudget } from './spending-budget.js'
 import { getStrategy } from './strategies.js'
-import { formatResearchMarkdown, researchTopic } from './web-search.js'
+import { formatResearchMarkdown, researchTopic, searchWeb } from './web-search.js'
 import { buildWorkspaceBriefing, parseToolCalls, runTool, stripToolBlocks } from './workspace.js'
 import type { SessionBus } from './bus.js'
 
@@ -95,6 +95,25 @@ export interface RunnerDeps {
 
 const CALL_TIMEOUT_MS = 120_000
 
+function defaultOutputTokens(modelId: string): number {
+  return /(?:deepseek-v4|deepseek-reasoner|(^|[/:-])r1(?:[/:-]|$)|qwq|\bo[13](?:[-:]|$)|thinking)/i.test(modelId)
+    ? 4096
+    : 1024
+}
+
+function emptyResponseMessage(result: ChatResult | null): string {
+  if (!result) return 'Provider returned no response.'
+  if (result.refusalReason) return `Provider returned no final text (refusal: ${result.refusalReason.slice(0, 240)}).`
+  const details = [
+    result.finishReason ? `finish_reason=${result.finishReason}` : null,
+    result.completionTokens != null ? `completion_tokens=${result.completionTokens}` : null,
+    result.reasoningTokens != null ? `reasoning_tokens=${result.reasoningTokens}` : null,
+  ].filter(Boolean)
+  return details.length
+    ? `Provider returned no final text (${details.join(', ')}). Increase the member output limit or choose a model that returns visible text.`
+    : 'Provider returned no final text. The provider may have returned an unsupported response shape.'
+}
+
 function computeCost(
   promptTokens: number | null,
   completionTokens: number | null,
@@ -171,6 +190,8 @@ export class SessionRunner {
       if (!council) throw new Error('council not found')
       const activeMembers = council.members.filter((m) => m.enabled)
       const options = this.deps.loadSessionOptions?.(sessionId) ?? {}
+      const webSearchEnabled =
+        this.deps.researchEnabled !== false && this.deps.loadResearchEnabled?.(sessionId) !== false
       const configuredLimit = options.budgetUsd ?? null
       const limit =
         this.deps.maxSessionUsd == null
@@ -394,6 +415,7 @@ export class SessionRunner {
               false,
               strategy.instruction(roundNum),
               workspace?.root,
+              webSearchEnabled,
             )
           }
         } else {
@@ -414,6 +436,7 @@ export class SessionRunner {
                 false,
                 strategy.instruction(roundNum),
                 workspace?.root,
+                webSearchEnabled,
               )
             }),
           )
@@ -584,6 +607,7 @@ export class SessionRunner {
     isSynthesis = false,
     promptAddon?: string,
     workspaceRoot?: string,
+    webSearchEnabled = false,
   ): Promise<string | undefined> {
     const { bus } = this.deps
     bus.publish({
@@ -620,13 +644,15 @@ export class SessionRunner {
           includeTranscript,
           strategyInstruction: promptAddon,
           workspaceRoot,
+          webSearchEnabled,
         }),
       )
     }
 
+    const outputTokens = member.maxTokens ?? defaultOutputTokens(model.modelId)
     const budget = {
       contextWindow: model.contextWindow,
-      responseTokens: member.maxTokens ?? 1024,
+      responseTokens: outputTokens,
       safetyMargin: 128,
     }
     const adapter = getAdapter(model.providerProtocol)
@@ -639,7 +665,7 @@ export class SessionRunner {
         apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : undefined,
         modelId: model.modelId,
         temperature: member.temperature,
-        maxTokens: member.maxTokens ?? 1024,
+        maxTokens: outputTokens,
         timeoutMs: CALL_TIMEOUT_MS,
         signal,
       }
@@ -647,8 +673,10 @@ export class SessionRunner {
       let completionTokens = 0
       let retryCount = 0
       let text = ''
+      let lastResult: ChatResult | null = null
       const working = [...messages]
-      const maxHops = workspaceRoot && !isSynthesis ? 4 : 0
+      const canSearch = webSearchEnabled && !isSynthesis
+      const maxHops = workspaceRoot || canSearch ? 4 : 0
       for (let hop = 0; hop <= maxHops; hop++) {
         const bounded = fitMessages(working, budget)
         const attempted = await withRetry(
@@ -657,7 +685,7 @@ export class SessionRunner {
               if (signal.aborted) throw new SessionCancelled()
               const settle = this.spending
                 .get(sessionId)
-                ?.reserve(bounded, chatBase.maxTokens ?? 1024, model.inputPerMTokUsd, model.outputPerMTokUsd)
+                ?.reserve(bounded, chatBase.maxTokens ?? outputTokens, model.inputPerMTokUsd, model.outputPerMTokUsd)
               return adapter.chat({ ...chatBase, messages: bounded }).then((value) => {
                 settle?.(
                   computeCost(
@@ -677,11 +705,29 @@ export class SessionRunner {
         promptTokens += attempted.value.promptTokens ?? 0
         completionTokens += attempted.value.completionTokens ?? 0
         text = attempted.value.text
-        const tools = workspaceRoot && !isSynthesis ? parseToolCalls(text) : []
-        if (!workspaceRoot || !tools.length) break
-        if (hop === maxHops) throw new Error('Workspace tool-hop limit reached before a final answer.')
+        lastResult = attempted.value
+        const tools = workspaceRoot || canSearch ? parseToolCalls(text) : []
+        if (!tools.length) break
+        if (hop === maxHops) throw new Error('Tool-hop limit reached before a final answer.')
         if (tools.length > 8) throw new Error('Workspace tool-call limit exceeded (8 per hop).')
-        const toolOut = tools.map((t) => runTool(workspaceRoot, t)).join('\n\n')
+        const webCalls = tools.filter((tool) => tool.name === 'web_search')
+        if (!canSearch && webCalls.length) throw new Error('Web search is disabled for this session.')
+        if (webCalls.length > 3) throw new Error('Web-search limit exceeded (3 per member turn).')
+        const toolOut = (
+          await Promise.all(
+            tools.map(async (tool) => {
+              if (tool.name === 'web_search') {
+                const results = await searchWeb(tool.query!, 5, 8_000)
+                return `web_search ${tool.query}\n${
+                  results.map((result) => `- [${result.title}](${result.url}): ${result.snippet}`).join('\n') ||
+                  '(no results)'
+                }`
+              }
+              if (!workspaceRoot) return 'workspace tool error: no workspace is attached'
+              return runTool(workspaceRoot, tool)
+            }),
+          )
+        ).join('\n\n')
         working.push({ role: 'assistant', content: text })
         working.push({
           role: 'user',
@@ -689,7 +735,7 @@ export class SessionRunner {
         })
       }
       text = stripToolBlocks(text)
-      if (!text.trim()) throw new Error('Provider returned an empty response.')
+      if (!text.trim()) throw new Error(emptyResponseMessage(lastResult))
       const result = { text, promptTokens, completionTokens }
 
       const latency = Date.now() - started
@@ -804,8 +850,9 @@ export class SessionRunner {
       const latency = Date.now() - started
       const msgText = err instanceof Error ? err.message : String(err)
       const retryCount = Number((err as { retryCount?: number })?.retryCount ?? 0)
-      const errorCode =
-        err instanceof AuthError
+      const errorCode = msgText.startsWith('Provider returned no final text')
+        ? 'empty_response'
+        : err instanceof AuthError
           ? 'authentication_failed'
           : err instanceof RateLimitError
             ? 'rate_limited'

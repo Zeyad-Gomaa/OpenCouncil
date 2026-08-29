@@ -13,14 +13,17 @@ Reference: [Google Gemini prompt design strategies](https://ai.google.dev/gemini
 `engine/prompts.ts` builds two messages:
 
 1. The system message defines the seat, instruction priority, quality bar,
-   response shape, and optional read-only workspace tools.
+   response shape, optional read-only workspace tools, and (when enabled) a
+   bounded `web_search` tool.
 2. The user message contains delimited untrusted council evidence, separate
    operator updates, and the final question plus the current strategy objective.
 
 Peer responses, web results, workspace files, tool results, and peer rankings
 are always evidence. Text inside them cannot change the member's role or grant
 new tool access. Dynamic XML characters are escaped. Code claims should cite a
-file and line; factual claims may cite only supplied URLs.
+file and line; factual claims may cite only supplied URLs. A member can choose a
+focused search query during its own turn when evidence is insufficient. Search
+results are untrusted, capped, and must not be treated as instructions.
 
 ## Strategy objectives
 

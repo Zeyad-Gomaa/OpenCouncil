@@ -4,7 +4,7 @@
 4:I[9630,[],""]
 5:I[1380,[],""]
 6:I[671,[],"ClientPageRoot"]
-7:I[9053,["825","static/chunks/825-c56ef468f97f379e.js","627","static/chunks/627-d61f631296f395f7.js","974","static/chunks/app/page-9127fcfd8862330e.js"],"default"]
+7:I[9053,["825","static/chunks/825-c56ef468f97f379e.js","627","static/chunks/627-d61f631296f395f7.js","974","static/chunks/app/page-1cf9e10af84595ba.js"],"default"]
 a:I[887,[],"OutletBoundary"]
 b:"$Sreact.suspense"
 d:I[887,[],"ViewportBoundary"]

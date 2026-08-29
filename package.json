@@ -39,14 +39,18 @@
     "node": ">=22.5"
   },
   "scripts": {
+    "clean:generated": "node scripts/clean-generated.js",
+    "prebuild": "npm run clean:generated",
     "build": "npm run build:shared && npm run build:server && npm run build:web",
     "bundle": "npm run build",
     "build:shared": "tsc -p packages/shared",
     "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
+    "prebuild:web": "npm run clean:generated",
     "build:web": "next build apps/web --webpack && node scripts/copy-web.js",
     "dev": "npm run build:shared && npm run build:server && concurrently -n api,web -c magenta,cyan \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "node --watch apps/server/dist/index.js",
     "dev:web": "next dev -p 3000 apps/web",
+    "pretypecheck": "npm run clean:generated",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -55,10 +59,11 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "prepack": "npm run clean:generated",
     "prepare": "node scripts/prepare.js"
   },
   "dependencies": {
-    "@fastify/static": "^8.3.0",
+    "@fastify/static": "^10.1.3",
     "fastify": "^5.12.1",
     "zod": "^3.23.8"
   },

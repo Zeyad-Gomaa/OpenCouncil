@@ -6,6 +6,7 @@ import { encryptSecret } from '../vault/crypto.js'
 import { AppError } from '../lib/errors.js'
 import {
   catalogEnrollSchema,
+  modelBatchUpdateSchema,
   modelCreateSchema,
   modelUpdateSchema,
   providerCreateSchema,
@@ -325,6 +326,43 @@ export function registerProviderRoutes(app: FastifyInstance, db: DB): void {
       id,
     )
     return modelToDTO(db.prepare('SELECT * FROM models WHERE id = ?').get(id) as never)
+  })
+
+  app.patch('/api/v1/models/batch', async (req) => {
+    const body = modelBatchUpdateSchema.parse(req.body)
+    const placeholders = body.modelIds.map(() => '?').join(',')
+    const current = db.prepare(`SELECT id FROM models WHERE id IN (${placeholders})`).all(...body.modelIds) as {
+      id: string
+    }[]
+    if (current.length !== new Set(body.modelIds).size)
+      throw new AppError(404, 'not_found', 'one or more models not found')
+    const patch = body.patch
+    const fields: string[] = []
+    const values: unknown[] = []
+    const assign = (column: string, value: unknown) => {
+      fields.push(`${column}=?`)
+      values.push(value)
+    }
+    if (patch.modelId !== undefined) assign('model_id', patch.modelId)
+    if (patch.displayName !== undefined) assign('display_name', patch.displayName)
+    if (patch.contextWindow !== undefined) assign('context_window', patch.contextWindow)
+    if (patch.inputPerMTokUsd !== undefined) assign('input_per_mtok_usd', patch.inputPerMTokUsd)
+    if (patch.outputPerMTokUsd !== undefined) assign('output_per_mtok_usd', patch.outputPerMTokUsd)
+    if (patch.enabled !== undefined) assign('enabled', patch.enabled ? 1 : 0)
+    try {
+      db.exec('BEGIN')
+      db.prepare(`UPDATE models SET ${fields.join(',')} WHERE id IN (${placeholders})`).run(...values, ...body.modelIds)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      if (error instanceof Error && error.message.includes('UNIQUE'))
+        throw new AppError(409, 'duplicate', 'batch update would create a duplicate model')
+      throw error
+    }
+    logActivity(db, 'models.batch_updated', { ids: body.modelIds, patch: Object.keys(patch) })
+    return {
+      updated: body.modelIds.map((id) => modelToDTO(db.prepare('SELECT * FROM models WHERE id=?').get(id) as never)),
+    }
   })
 
   app.delete('/api/v1/models/:id', async (req) => {

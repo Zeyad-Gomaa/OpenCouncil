@@ -4,8 +4,13 @@ import { httpJson } from '../lib/http.js'
 import type { ChatCallOpts, ChatResult, ProviderAdapter } from './types.js'
 
 interface GeminiResponse {
-  candidates?: { content?: { parts?: { text?: string }[] } }[]
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+  responseId?: string
+  candidates?: {
+    finishReason?: string
+    finishMessage?: string
+    content?: { parts?: { text?: string }[] }
+  }[]
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
 }
 
 export const googleAdapter: ProviderAdapter = {
@@ -37,10 +42,15 @@ export const googleAdapter: ProviderAdapter = {
       signal: opts.signal,
     })
 
+    const candidate = data.candidates?.[0]
     return {
-      text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join(''),
+      text: (candidate?.content?.parts ?? []).map((p) => p.text ?? '').join(''),
       promptTokens: data.usageMetadata?.promptTokenCount ?? null,
       completionTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+      finishReason: candidate?.finishReason ?? null,
+      responseId: data.responseId ?? null,
+      reasoningTokens: data.usageMetadata?.thoughtsTokenCount ?? null,
+      refusalReason: candidate?.finishMessage ?? null,
     }
   },
 }

@@ -24,7 +24,7 @@ maintenance work; see [the audit](AUDIT.md), not an assumption of current suppor
 | `apps/server/src/engine/prompts.ts`          | Member prompt contract and evidence/instruction separation                |
 | `apps/server/src/engine/session-manager.ts`  | Queue, four concurrent sessions, cancellation and directives              |
 | `apps/server/src/engine/execution-policy.ts` | Retries, backoff, two concurrent calls per provider                       |
-| `apps/server/src/engine/workspace.ts`        | Read-only tree, file, and literal-search tools                            |
+| `apps/server/src/engine/workspace.ts`        | Read-only tree, file, literal-search, and bounded web-search tools        |
 | `apps/server/src/engine/bus.ts`              | Session event sequence numbers and pub/sub                                |
 | `apps/server/src/providers/`                 | OpenAI-compatible, Anthropic, Google, mock adapters and model catalogs    |
 | `apps/web/app/`                              | Home, history, `/sessions/view/?id=…`, settings, activity                 |
@@ -48,11 +48,15 @@ same-origin `/api` rewrites to the API on 4311.
 5. Each provider has a two-call semaphore. Temporary provider errors retry with
    bounded backoff. Retry-After is honored up to 60 seconds; longer requests fail
    that turn rather than retrying too soon. Auth errors do not retry.
-6. Attached workspaces add bounded text briefings and up to four tool-follow-up
+6. Members with research enabled may request up to three focused web searches per
+   tool hop. Search results are untrusted evidence and include source URLs.
+   Attached workspaces add bounded text briefings and up to four tool-follow-up
    hops. Tools can read but not modify files. Tool arguments and returned text
    are bounded. Prompt fitting uses a conservative UTF-8 byte estimate, always
    retaining the system contract and final task; it is not a provider tokenizer.
-7. Successful responses and usage are persisted and emitted. Individual failures
+7. Successful responses and usage are persisted and emitted. Provider adapters
+   preserve finish reasons, refusal details, and reasoning-token counts so empty
+   responses produce actionable diagnostics. Individual failures
    produce error records; no successful member response means session failure.
 8. An optional moderator synthesizes the transcript. Final cancellation is checked,
    terminal state is persisted, then the completion event is published.

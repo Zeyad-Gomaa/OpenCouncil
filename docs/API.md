@@ -115,6 +115,10 @@ Pricing fields are optional per-million-USD used for cost estimates.
 
 ### PATCH /models/:id ### DELETE /models/:id
 
+### PATCH /models/batch
+
+Updates up to 500 enrolled models atomically. Body: `{ "modelIds": ["uuid", ...], "patch": { "enabled": false } }`. The patch may include `displayName`, `contextWindow`, pricing fields, or `enabled`; all IDs must exist.
+
 ## Members (council seats)
 
 ### GET /members
@@ -135,6 +139,10 @@ Joined with model + provider names.
 ```
 
 ### PATCH /members/:id ### DELETE /members/:id
+
+### PATCH /members/batch-model
+
+Assigns one enabled model to up to 500 members and enables those seats. Body: `{ "memberIds": ["uuid", ...], "modelId": "uuid", "maxTokens": 4096 }`. `maxTokens` is optional and may be `null` to clear the override. The update is atomic.
 
 Deleting a member removes it from all councils and its messages remain
 (attributed by name in historical transcripts).

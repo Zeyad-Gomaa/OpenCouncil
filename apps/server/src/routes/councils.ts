@@ -9,6 +9,7 @@ import {
   memberCreateSchema,
   memberUpdateSchema,
   COUNCIL_TEMPLATES,
+  memberBatchModelSchema,
 } from '@opencouncil/shared'
 import { councilToDTO, logActivity, memberToDTO } from './mappers.js'
 
@@ -86,6 +87,42 @@ export function registerMemberCouncilRoutes(app: FastifyInstance, db: DB): void 
     )
     const row = db.prepare(`${MEMBER_JOIN} WHERE mem.id = ?`).get(id) as never
     return memberToDTO(row)
+  })
+
+  app.patch('/api/v1/members/batch-model', async (req) => {
+    const body = memberBatchModelSchema.parse(req.body)
+    if (!db.prepare('SELECT id FROM models WHERE id=? AND enabled=1').get(body.modelId))
+      throw new AppError(404, 'not_found', 'target model not found or disabled')
+    const placeholders = body.memberIds.map(() => '?').join(',')
+    const found = db.prepare(`SELECT id FROM members WHERE id IN (${placeholders})`).all(...body.memberIds) as {
+      id: string
+    }[]
+    if (found.length !== new Set(body.memberIds).size)
+      throw new AppError(404, 'not_found', 'one or more members not found')
+    db.exec('BEGIN')
+    try {
+      const maxTokens = body.maxTokens === undefined ? null : body.maxTokens
+      if (body.maxTokens === undefined) {
+        db.prepare(`UPDATE members SET model_id=?, enabled=1 WHERE id IN (${placeholders})`).run(
+          body.modelId,
+          ...body.memberIds,
+        )
+      } else {
+        db.prepare(`UPDATE members SET model_id=?, max_tokens=?, enabled=1 WHERE id IN (${placeholders})`).run(
+          body.modelId,
+          maxTokens,
+          ...body.memberIds,
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    logActivity(db, 'members.batch_model_updated', { ids: body.memberIds, modelId: body.modelId })
+    return {
+      updated: body.memberIds.map((id) => memberToDTO(db.prepare(`${MEMBER_JOIN} WHERE mem.id=?`).get(id) as never)),
+    }
   })
 
   app.delete('/api/v1/messages/:id', async () => {

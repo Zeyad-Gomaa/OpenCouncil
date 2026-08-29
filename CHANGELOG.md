@@ -15,13 +15,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   code review, architecture, and security review.
 - A shared prompt contract with explicit trust boundaries, round-specific
   strategy objectives, structured moderator decisions, and local-code tool-flow tests.
+- Per-member, opt-in focused web search during deliberation with bounded queries,
+  capped results, source URLs, and prompt-level evidence safeguards.
+- Batch model enable/disable and batch member model assignment APIs with matching
+  Settings controls.
 
 ### Changed
 
-- Upgraded to Fastify 5.12, Next.js 16.3, React 19.2, Node 22 types, and current build tooling; Vitest remains on compatible 3.2.7.
+- Upgraded to Fastify 5.12, @fastify/static 10.1, Next.js 16.3, React 19.2,
+  Node 22 types, and current build tooling; Vitest remains on compatible 3.2.7.
 - Builds no longer fetch Google Fonts; containers run as a non-root user and include a healthcheck.
 - Prompt context fitting preserves the system contract and final task, and
   workspace tool arguments/results now have explicit bounds.
+- Provider adapters retain finish reasons, refusal details, response IDs, and
+  reasoning-token counts; reasoning models receive a safer default output budget
+  and empty responses report actionable diagnostics.
 
 ### Added
 
@@ -67,6 +75,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A blank optional key in the sample environment file now uses the persisted-key fallback.
 - Static packaging now excludes iCloud duplicate filenames even when the copy
   suffix appears before a file extension.
+- Generated-artifact cleanup now runs before typechecking, building, and
+  packaging so iCloud duplicate declarations cannot break local workflows.
 
 - Mermaid diagrams no longer dump "Syntax error in text / mermaid version …"
   into the page. Invalid LLM diagrams fall back to source; leftover error SVGs

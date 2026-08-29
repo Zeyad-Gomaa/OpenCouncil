@@ -116,10 +116,11 @@ describe('workspace', () => {
   })
 
   it('parses tool fences and xml, then strips them', () => {
-    const text = `Need the file.\n\`\`\`tool\n{"name":"read_file","path":"src/app.ts"}\n\`\`\`\n<tool name="grep"><pattern>add</pattern></tool>`
+    const text = `Need the file.\n\`\`\`tool\n{"name":"read_file","path":"src/app.ts"}\n\`\`\`\n<tool name="grep"><pattern>add</pattern></tool>\n\`\`\`tool\n{"name":"web_search","query":"TypeScript queue best practices"}\n\`\`\``
     const calls = parseToolCalls(text)
-    expect(calls.map((c) => c.name)).toEqual(['read_file', 'grep'])
+    expect(calls.map((c) => c.name)).toEqual(['read_file', 'web_search', 'grep'])
     expect(calls[0]?.path).toBe('src/app.ts')
+    expect(calls[1]?.query).toContain('TypeScript')
     expect(stripToolBlocks(text)).toBe('Need the file.')
   })
 

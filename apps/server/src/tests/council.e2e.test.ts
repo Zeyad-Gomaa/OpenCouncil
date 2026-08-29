@@ -92,6 +92,62 @@ describe('council end-to-end', () => {
     expect(templates.every((template) => template.rounds >= 1 && template.rounds <= 8)).toBe(true)
   })
 
+  it('updates selected models and member assignments transactionally', async () => {
+    const models = db.prepare('SELECT id, enabled FROM models LIMIT 2').all() as { id: string; enabled: number }[]
+    const members = db.prepare('SELECT id, model_id, max_tokens, enabled FROM members LIMIT 2').all() as {
+      id: string
+      model_id: string
+      max_tokens: number | null
+      enabled: number
+    }[]
+    expect(models.length).toBe(2)
+    expect(members.length).toBe(2)
+    const modelIds = models.map((model) => model.id)
+    const memberIds = members.map((member) => member.id)
+    try {
+      const modelUpdate = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/models/batch',
+        payload: { modelIds, patch: { enabled: false } },
+      })
+      expect(modelUpdate.statusCode).toBe(200)
+      expect(modelUpdate.json().updated).toHaveLength(2)
+      const modelRestore = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/models/batch',
+        payload: { modelIds, patch: { enabled: true } },
+      })
+      expect(modelRestore.statusCode).toBe(200)
+
+      const target = db.prepare('SELECT id FROM models WHERE enabled=1 LIMIT 1').get() as { id: string }
+      const memberUpdate = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/members/batch-model',
+        payload: { memberIds, modelId: target.id, maxTokens: 4096 },
+      })
+      expect(memberUpdate.statusCode).toBe(200)
+      expect(memberUpdate.json().updated).toHaveLength(2)
+      expect(
+        memberUpdate
+          .json()
+          .updated.every(
+            (member: { modelId: string; maxTokens: number }) =>
+              member.modelId === target.id && member.maxTokens === 4096,
+          ),
+      ).toBe(true)
+    } finally {
+      db.prepare('UPDATE models SET enabled=? WHERE id=?').run(models[0]!.enabled, models[0]!.id)
+      db.prepare('UPDATE models SET enabled=? WHERE id=?').run(models[1]!.enabled, models[1]!.id)
+      for (const member of members)
+        db.prepare('UPDATE members SET model_id=?, max_tokens=?, enabled=? WHERE id=?').run(
+          member.model_id,
+          member.max_tokens,
+          member.enabled,
+          member.id,
+        )
+    }
+  })
+
   it('uses 400 for malformed JSON, 415 for unsupported media, and 413 for oversized bodies', async () => {
     const malformed = await app.inject({
       method: 'POST',
@@ -393,6 +449,64 @@ describe('council end-to-end', () => {
         council.id,
       )
       rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('lets a member choose a focused web search during its own turn', async () => {
+    const member = db.prepare('SELECT id FROM members LIMIT 1').get() as { id: string }
+    const council = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/councils',
+        payload: { name: 'Agent search test', strategy: 'round_robin', rounds: 1, memberIds: [member.id] },
+      })
+    ).json() as { id: string }
+    const originalTavily = process.env.TAVILY_API_KEY
+    process.env.TAVILY_API_KEY = 'test-search-key'
+    const chat = vi.spyOn(mockAdapter, 'chat').mockImplementation(async (opts) => {
+      const system = opts.messages.find((message) => message.role === 'system')?.content ?? ''
+      const all = opts.messages.map((message) => message.content).join('\n')
+      if (system.includes('<web_search_tools>') && !all.includes('TOOL RESULTS:')) {
+        return {
+          text: '```tool\n{"name":"web_search","query":"current TypeScript queue guidance"}\n```',
+          promptTokens: 1,
+          completionTokens: 1,
+        }
+      }
+      return {
+        text: 'I searched the focused query and found https://docs.example/answer useful evidence.',
+        promptTokens: 1,
+        completionTokens: 1,
+      }
+    })
+    vi.mocked(fetch).mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ results: [{ title: 'Docs', url: 'https://docs.example/answer', content: 'evidence' }] }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+    )
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { councilId: council.id, topic: 'Find current queue guidance', researchEnabled: true },
+      })
+      expect(await waitForSessionCompletion(created.json().id)).toBe('completed')
+      expect(
+        chat.mock.calls.some((call) => call[0].messages.some((message) => message.content.includes('TOOL RESULTS:'))),
+      ).toBe(true)
+      const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/sessions/${created.json().id}` })).json()
+      expect(
+        snapshot.messages.some((message: { content: string }) => message.content.includes('docs.example/answer')),
+      ).toBe(true)
+    } finally {
+      if (originalTavily === undefined) delete process.env.TAVILY_API_KEY
+      else process.env.TAVILY_API_KEY = originalTavily
+      await app.inject({ method: 'DELETE', url: `/api/v1/councils/${council.id}` })
     }
   })
 

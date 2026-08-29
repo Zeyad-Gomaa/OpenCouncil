@@ -1,6 +1,6 @@
 1:"$Sreact.fragment"
 2:I[671,[],"ClientPageRoot"]
-3:I[9053,["825","static/chunks/825-c56ef468f97f379e.js","627","static/chunks/627-d61f631296f395f7.js","974","static/chunks/app/page-9127fcfd8862330e.js"],"default"]
+3:I[9053,["825","static/chunks/825-c56ef468f97f379e.js","627","static/chunks/627-d61f631296f395f7.js","974","static/chunks/app/page-1cf9e10af84595ba.js"],"default"]
 6:I[887,[],"OutletBoundary"]
 7:"$Sreact.suspense"
 b:I[887,[],"ViewportBoundary"]

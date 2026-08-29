@@ -21,6 +21,10 @@ export interface ChatResult {
   text: string
   promptTokens: number | null
   completionTokens: number | null
+  finishReason?: string | null
+  responseId?: string | null
+  reasoningTokens?: number | null
+  refusalReason?: string | null
 }
 
 export interface ProviderAdapter {
