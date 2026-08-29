@@ -226,16 +226,25 @@ export declare const councilUpdateSchema: z.ZodEffects<z.ZodObject<{
 export declare const sessionCreateSchema: z.ZodObject<{
     councilId: z.ZodString;
     topic: z.ZodString;
+    researchEnabled: z.ZodOptional<z.ZodBoolean>;
+    budgetUsd: z.ZodOptional<z.ZodNumber>;
+    consensusEnabled: z.ZodOptional<z.ZodBoolean>;
     workspacePath: z.ZodOptional<z.ZodString>;
     workspaceFiles: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
 }, "strip", z.ZodTypeAny, {
     councilId: string;
     topic: string;
+    researchEnabled?: boolean | undefined;
+    budgetUsd?: number | undefined;
+    consensusEnabled?: boolean | undefined;
     workspacePath?: string | undefined;
     workspaceFiles?: string[] | undefined;
 }, {
     councilId: string;
     topic: string;
+    researchEnabled?: boolean | undefined;
+    budgetUsd?: number | undefined;
+    consensusEnabled?: boolean | undefined;
     workspacePath?: string | undefined;
     workspaceFiles?: string[] | undefined;
 }>;

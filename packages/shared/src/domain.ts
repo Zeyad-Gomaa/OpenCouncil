@@ -133,6 +133,11 @@ export interface SessionDTO {
   moderatorMemberId?: string | null
   workspacePath?: string | null
   workspaceFiles?: string[]
+  researchEnabled?: boolean
+  budgetUsd?: number | null
+  consensusEnabled?: boolean
+  budget?: import('./evaluation.js').BudgetState
+  consensus?: import('./evaluation.js').ConsensusResult
   createdAt: string
 }
 
@@ -144,6 +149,7 @@ export interface ActivityTotals {
   totalTokens: number
   costUsd: number | null
   errors: number
+  unpricedCalls?: number
 }
 
 export interface DailyActivity {

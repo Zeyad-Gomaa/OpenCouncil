@@ -44,6 +44,11 @@ async function main(): Promise<void> {
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
     loadWorkspace: helpers.loadWorkspace,
+    loadResearchEnabled: helpers.loadResearchEnabled,
+    loadSessionOptions: helpers.loadSessionOptions,
+    saveSessionResult: helpers.saveSessionResult,
+    maxSessionUsd: config.maxSessionUsd,
+    researchEnabled: config.researchEnabled,
   })
   const sessions = new SessionManager(bus, runner)
 

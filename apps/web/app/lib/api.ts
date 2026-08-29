@@ -7,6 +7,7 @@ export const API = '/api/v1'
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('opencouncil:unauthorized'))
     let message = `${res.status}`
     try {
       const body = (await res.json()) as { error?: { message?: string } }

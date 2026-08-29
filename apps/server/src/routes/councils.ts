@@ -3,7 +3,13 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import type { DB } from '../db/connection.js'
 import { AppError } from '../lib/errors.js'
-import { councilCreateSchema, councilUpdateSchema, memberCreateSchema, memberUpdateSchema } from '@opencouncil/shared'
+import {
+  councilCreateSchema,
+  councilUpdateSchema,
+  memberCreateSchema,
+  memberUpdateSchema,
+  COUNCIL_TEMPLATES,
+} from '@opencouncil/shared'
 import { councilToDTO, logActivity, memberToDTO } from './mappers.js'
 
 const MEMBER_JOIN = `
@@ -93,6 +99,8 @@ export function registerMemberCouncilRoutes(app: FastifyInstance, db: DB): void 
     logActivity(db, 'member.deleted', { id })
     return { ok: true }
   })
+
+  app.get('/api/v1/meta/council-templates', async () => ({ templates: COUNCIL_TEMPLATES }))
 
   // ---- councils ----
   app.get('/api/v1/councils', async () => {

@@ -4,8 +4,9 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { apiGet, apiSend } from '../../lib/api'
+import { createEventCursor } from '../../lib/eventCursor'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
-import type { CouncilEvent, MemberLiveStatus, MessageDTO, SessionDTO } from '@opencouncil/shared'
+import type { ConsensusResult, CouncilEvent, MemberLiveStatus, MessageDTO, SessionDTO } from '@opencouncil/shared'
 
 interface Snapshot {
   session: SessionDTO
@@ -98,10 +99,11 @@ function ChamberContent() {
 
         if (['completed', 'failed', 'cancelled'].includes(snap.session.status)) return
 
+        const cursor = createEventCursor(snap.lastEventSequence)
         const connect = () => {
           if (cancelled) return
           esRef.current?.close()
-          const es = new EventSource(`/api/v1/sessions/${sessionId}/events?after=${snap.lastEventSequence}`)
+          const es = new EventSource(`/api/v1/sessions/${sessionId}/events?after=${cursor.value}`)
           esRef.current = es
           es.onmessage = (ev) => {
             let event: CouncilEvent & { message?: MessageDTO }
@@ -110,6 +112,7 @@ function ChamberContent() {
             } catch {
               return
             }
+            if (!cursor.accept(ev.lastEventId)) return
             switch (event.type) {
               case 'session.started':
                 setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'running' } })
@@ -152,7 +155,12 @@ function ChamberContent() {
                 if (event.message) mergeMessage(event.message)
                 break
               case 'session.completed':
-                setSnapshot((s) => s && { ...s, session: { ...s.session, status: 'completed' } })
+                apiGet<Snapshot>(`/sessions/${sessionId}`)
+                  .then((fresh) => {
+                    setSnapshot(fresh)
+                    setLiveUsage({ calls: fresh.usage.calls, tokens: fresh.usage.tokens, costUsd: fresh.usage.cost })
+                  })
+                  .catch(() => {})
                 setActionNotice(null)
                 es.close()
                 break
@@ -171,7 +179,12 @@ function ChamberContent() {
           }
           es.onerror = () => {
             es.close()
-            if (!cancelled) retryTimer = setTimeout(connect, 2000)
+            if (!cancelled)
+              apiGet<{ authenticated: boolean }>('/auth/status')
+                .then((auth) => {
+                  if (auth.authenticated) retryTimer = setTimeout(connect, 2000)
+                })
+                .catch(() => {})
           }
         }
         connect()
@@ -443,6 +456,24 @@ function ChamberContent() {
         </div>
       )}
 
+      {session.consensus && <ConsensusPanel consensus={session.consensus} />}
+      {session.budget && (
+        <section className="card" aria-label="Session budget">
+          <h3>Spending control</h3>
+          <p>
+            Reserved estimate: ${session.budget.reservedUsd.toFixed(4)} · Reported: $
+            {session.budget.reportedUsd.toFixed(4)} · Attempts: {session.budget.attempts}/{session.budget.maxAttempts}
+          </p>
+          {session.budget.uncertainAttempts > 0 && (
+            <p>
+              {session.budget.uncertainAttempts} attempt(s) have unknown reported cost; their reservations were
+              retained.
+            </p>
+          )}
+          {session.budget.stopped && <p role="alert">{session.budget.stopped}</p>}
+        </section>
+      )}
+
       <div className="usage-bar">
         <div className="usage-item">
           <span>Calls</span>
@@ -462,6 +493,36 @@ function ChamberContent() {
         </div>
       </div>
     </div>
+  )
+}
+
+function ConsensusPanel({ consensus }: { consensus: ConsensusResult }) {
+  const names = new Map(consensus.candidates.map((candidate) => [candidate.id, candidate.memberName]))
+  return (
+    <section className="card" aria-label="Peer ranking">
+      <h3>Anonymous peer ranking</h3>
+      <p>
+        Status: {consensus.status.replaceAll('_', ' ')} · ballot coverage {(consensus.coverage * 100).toFixed(0)}%.
+        Agreement measures preference, not correctness.
+      </p>
+      {consensus.scores.map((score) => (
+        <p key={score.candidateId}>
+          <strong>{names.get(score.candidateId) ?? score.candidateId}</strong>: {(score.score * 100).toFixed(0)} score ·{' '}
+          {score.firstPlaceVotes} first-place vote(s)
+        </p>
+      ))}
+      {consensus.ballots.length > 0 && (
+        <details>
+          <summary>Raw valid ballots and dissent</summary>
+          {consensus.ballots.map((b) => (
+            <p key={b.memberId}>
+              {b.ranking.join(' › ')} — {b.rationale}
+            </p>
+          ))}
+        </details>
+      )}
+      {consensus.rejected.length > 0 && <p>{consensus.rejected.length} invalid ballot(s) were excluded.</p>}
+    </section>
   )
 }
 

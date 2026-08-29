@@ -1,9 +1,7 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import OperatorGate from './components/OperatorGate'
 import Nav from './components/Nav'
 import './globals.css'
-
-const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'OpenCouncil',
@@ -12,12 +10,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.className}>
+    <html lang="en">
       <body>
-        <div className="shell">
-          <Nav />
-          <main className="main">{children}</main>
-        </div>
+        <OperatorGate>
+          <div className="shell">
+            <Nav />
+            <main className="main">{children}</main>
+          </div>
+        </OperatorGate>
       </body>
     </html>
   )

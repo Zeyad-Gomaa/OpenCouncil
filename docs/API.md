@@ -1,7 +1,12 @@
 # OpenCouncil API Reference
 
 Base URL: `http://localhost:4311/api/v1`
-All bodies JSON. Errors use `{ "error": { "code": string, "message": string } }`.
+All request bodies are JSON. Errors use `{ "error": { "code": string, "message": string, "details"?: unknown } }`.
+Zod validation returns `400 validation_error` with field paths. Malformed JSON,
+unsupported media, and oversized bodies preserve HTTP 400, 415, and 413.
+Unexpected server errors return a generic message; details stay in server logs.
+Cross-origin browser requests receive `403 cross_origin_denied`. Use a same-origin
+UI/proxy. When `OPEN_COUNCIL_OPERATOR_TOKEN` is set, all API routes except health and auth entrypoints require its bearer token or an HttpOnly browser session cookie.
 
 ## System
 
@@ -18,7 +23,7 @@ path; neither touches the database.
 ### GET /system/info
 
 `200 { "version", "instanceId", "uptimeSeconds", "providers", "models",
-"members", "councils", "runningSessions" }` — counts reflect enabled rows only,
+"members", "councils", "runningSessions", "researchEnabled" }` — counts reflect enabled rows only,
 except `councils` (all) and `runningSessions` (`queued` or `running`).
 
 ### GET /meta/providers
@@ -45,13 +50,12 @@ Council strategies: `debate`, `swarm`, `critique`, `round_robin`, `review`,
 }
 ```
 
-For `static` protocol (anthropic/google), baseUrl may be omitted to use the default.
+For `anthropic` and `google`, baseUrl may be omitted to use the adapter default.
 `201 Provider`
 
 ### PATCH /providers/:id
 
-Partial update. Omit `apiKey` to keep the stored key; send `null`... (not allowed) —
-send `"apiKey": ""` to clear. `200 Provider`
+Partial update. Omit `apiKey` to keep the stored key; send `null` or `""` to clear. `200 Provider`
 
 ### DELETE /providers/:id
 
@@ -138,10 +142,17 @@ Deleting a member removes it from all councils and its messages remain
 ### DELETE /messages/:id
 
 `405 { "error": { "code": "immutable" } }` — always. Transcripts are an audit
-record; delete the session instead. The route exists to answer with a clear
+record. No session-deletion API is implemented yet. The route exists to answer with a clear
 reason rather than a bare 404.
 
 ## Councils
+
+### GET /meta/council-templates
+
+Returns the six built-in council starting points. Each template includes a
+stable key, description, strategy, rounds, moderator recommendation, use cases,
+and suggested seat roles. Templates do not create members or councils by
+themselves.
 
 ### GET /councils
 
@@ -160,7 +171,8 @@ Each council includes its member roster.
 }
 ```
 
-`strategy`: `round_robin | debate`. Moderator must be a member of the council.
+`strategy`: `round_robin | debate | swarm | critique | review | architect | red_team`.
+Moderator must be a member of the council.
 
 ### GET/PATCH/DELETE /councils/:id
 
@@ -173,13 +185,23 @@ Each council includes its member roster.
   "councilId": "uuid",
   "topic": "Should we migrate to Postgres?",
   "workspacePath": "/absolute/path/to/repo",
-  "workspaceFiles": ["src/app.ts"]
+  "workspaceFiles": ["src/app.ts"],
+  "researchEnabled": false
 }
 ```
 
 `workspacePath` is optional. When set, it must be an absolute folder (or file)
 this process can read. Members receive a tree briefing and may call `list_dir`,
-`read_file`, and `grep` inside that root. They cannot write.
+`read_file`, and `grep` inside that root. They cannot write. Symlink escapes and
+common credential files are blocked. Grep is a case-insensitive literal search,
+not a regular expression. Prioritized files do not restrict other reads within
+the root; a pointed file grants access to its parent directory.
+
+`researchEnabled` defaults to true; set false to avoid sending this topic to web
+search services. The operator's `WEB_RESEARCH_ENABLED=false` overrides true
+requests. The effective creation-time preference is saved in the session
+snapshot and returned on Session DTOs. A later server-wide disable also blocks
+research for queued sessions. Model calls are unaffected.
 
 Returns `202 Session` and begins deliberation asynchronously.
 
@@ -198,7 +220,9 @@ the `createdAt` value of the last returned row.
 
 ### GET /sessions/:id
 
-Full snapshot: session + ordered messages + usage summary + moderator name.
+Full snapshot: `{ session, messages, usage: { calls, tokens, cost }, lastEventSequence }`.
+A session fails if no council member produces a response; individual failures
+still allow successful peers to continue. Disabled models/providers are not called.
 
 ### POST /sessions/:id/cancel
 
@@ -206,17 +230,20 @@ Aborts in-flight LLM calls; status becomes `cancelled`.
 
 ### POST /sessions/:id/clone
 
-Creates and starts a new session using the original execution snapshot,
-including any attached workspace.
+Alias for rerun. Uses the original question, workspace, and research preference,
+but current council configuration. Returns `409 council_missing` if the council
+was deleted; no new session is created.
 
 ### POST /sessions/:id/rerun
 
 Creates and starts a new session using the current council configuration.
-The attached workspace is copied onto the new session.
+The attached workspace and research preference are copied onto the new session.
+The new snapshot records the current council. A deleted council returns HTTP 409.
 
 ### GET /sessions/:id/export?format=json|jsonl|markdown
 
-Exports the historical session transcript without secrets.
+Exports the historical session transcript without stored provider credentials.
+Transcripts can still contain sensitive prompts, model output, or workspace excerpts.
 
 ### GET /sessions/:id/events (SSE)
 
@@ -269,3 +296,23 @@ keys after importing.
   "daily": [{ "day": "2026-08-22", "tokens": 42000, "costUsd": 0.31 }],
   "byMember": [...], "byModel": [...], "byProvider": [...] }
 ```
+
+`days` is an integer from 1 to 365 (default 30). The window includes today and
+the preceding `days - 1` UTC calendar days. The response includes
+`window: { since, until }` with an inclusive start and exclusive end. Totals,
+breakdowns, daily usage, and recent activity all use this window.
+`totals.unpricedCalls` counts successful calls without complete cost estimates.
+Unpriced calls do not contribute to `costUsd`; zero does not mean all calls were free.
+
+### GET /activity/export?days=30
+
+Downloads `text/csv` as `opencouncil-usage-30d.csv`, with one row per usage record
+(including failed calls), streamed in batches. It uses the same window as stats.
+Columns: `id`, `session_id`, `created_at`, `member_name`, `provider_name`,
+`model_name`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`,
+`latency_ms`, `retry_count`, `error_code`, `status`. Unknown costs are blank.
+No prompts, workspace contents, or provider keys are exported.
+
+CSV fields are quoted and formula-leading text is prefixed with an apostrophe.
+Spreadsheet applications differ in how they reinterpret CSV; do not enable
+formulas or external links in untrusted exported names.

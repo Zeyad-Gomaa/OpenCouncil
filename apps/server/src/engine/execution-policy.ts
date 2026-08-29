@@ -37,18 +37,26 @@ export async function withRetry<T>(
     } catch (error) {
       if (retryCount >= policy.maxRetries || !isTemporaryProviderError(error) || signal?.aborted)
         throw Object.assign(error instanceof Error ? error : new Error(String(error)), { retryCount })
-      const base = Math.min(policy.maxBackoffMs, policy.initialBackoffMs * 2 ** retryCount)
+      const retryAfter =
+        error instanceof RateLimitError || error instanceof ProviderHttpError ? error.retryAfterMs : undefined
+      // Do not retry earlier than a provider requests; very long waits fail this turn.
+      if (retryAfter != null && retryAfter > 60_000)
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { retryCount })
+      const base = Math.max(retryAfter ?? 0, Math.min(policy.maxBackoffMs, policy.initialBackoffMs * 2 ** retryCount))
       retryCount++
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, base + Math.floor(Math.random() * Math.max(1, base / 4)))
-        signal?.addEventListener(
-          'abort',
+        const onAbort = () => {
+          clearTimeout(timer)
+          reject(Object.assign(new Error('cancelled'), { retryCount }))
+        }
+        const timer = setTimeout(
           () => {
-            clearTimeout(timer)
-            reject(new Error('cancelled'))
+            signal?.removeEventListener('abort', onAbort)
+            resolve()
           },
-          { once: true },
+          base + Math.floor(Math.random() * Math.max(1, base / 4)),
         )
+        signal?.addEventListener('abort', onAbort, { once: true })
       })
     }
   }

@@ -16,6 +16,7 @@ import type {
   MemberDTO,
   StrategyKind,
   CouncilDTO,
+  CouncilTemplateDTO,
   CatalogModel,
   ProviderCatalogDTO,
 } from '@opencouncil/shared'
@@ -608,7 +609,6 @@ function MembersTab({ members, models, reload }: { members: MemberDTO[]; models:
   const [color, setColor] = useState(COLORS[0]!)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
   function openAdd() {
     setEditId(null)
     setName('')
@@ -781,7 +781,31 @@ function CouncilsTab({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const [templates, setTemplates] = useState<CouncilTemplateDTO[]>([])
+  const [templateKey, setTemplateKey] = useState('')
+
+  useEffect(() => {
+    apiGet<{ templates: CouncilTemplateDTO[] }>('/meta/council-templates')
+      .then((result) => setTemplates(result.templates))
+      .catch(() => {})
+  }, [])
+
+  function applyTemplate(template: CouncilTemplateDTO) {
+    setTemplateKey(template.key)
+    setEditId(null)
+    setName(template.name)
+    setDescription(template.description)
+    setStrategy(template.strategy)
+    setRounds(template.rounds)
+    const available = members.filter((member) => member.enabled).map((member) => member.id)
+    setSelectedIds(available)
+    setModeratorId(template.moderator === 'recommended' ? (available.at(-1) ?? '') : '')
+    setError(null)
+    setOpen(true)
+  }
+
   function openAdd() {
+    setTemplateKey('')
     setEditId(null)
     setName('')
     setDescription('')
@@ -794,6 +818,7 @@ function CouncilsTab({
   }
 
   function openEdit(c: CouncilDTO) {
+    setTemplateKey('')
     setEditId(c.id)
     setName(c.name)
     setDescription(c.description || '')
@@ -850,6 +875,31 @@ function CouncilsTab({
         </button>
       </div>
 
+      {templates.length > 0 && (
+        <section style={{ marginBottom: 24 }} aria-labelledby="council-templates-title">
+          <h3 id="council-templates-title">Council templates</h3>
+          <p className="muted">
+            Starting points for the deliberation flow. Apply one, then choose or reorder the members that fill its
+            suggested seats.
+          </p>
+          <div className="grid-auto">
+            {templates.map((template) => (
+              <article className="card" key={template.key}>
+                <h3>{template.name}</h3>
+                <p>{template.description}</p>
+                <p className="muted">
+                  {template.strategy.replaceAll('_', ' ')} · {template.rounds} round(s)
+                </p>
+                <p className="input-hint">Suggested seats: {template.suggestedSeats.join(', ')}</p>
+                <button onClick={() => applyTemplate(template)} disabled={members.every((member) => !member.enabled)}>
+                  Use template
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {councils.length === 0 ? (
         <div className="empty">
           <div className="empty-icon">🏛</div>
@@ -876,6 +926,27 @@ function CouncilsTab({
           </>
         }
       >
+        {!editId && templates.length > 0 && (
+          <>
+            <label>Template</label>
+            <select
+              value={templateKey}
+              onChange={(event) => {
+                setTemplateKey(event.target.value)
+                const template = templates.find((item) => item.key === event.target.value)
+                if (template) applyTemplate(template)
+              }}
+            >
+              <option value="">Custom council</option>
+              {templates.map((template) => (
+                <option key={template.key} value={template.key}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Architecture Council" />
 

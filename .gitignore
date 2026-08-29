@@ -11,8 +11,9 @@ data/
 
 # env & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+.secret_key
 
 # build output
 #

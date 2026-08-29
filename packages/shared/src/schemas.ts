@@ -90,7 +90,10 @@ export const councilUpdateSchema = z
 
 export const sessionCreateSchema = z.object({
   councilId: z.string().uuid(),
-  topic: z.string().min(1).max(8_000),
+  topic: z.string().trim().min(1).max(8_000),
+  researchEnabled: z.boolean().optional(),
+  budgetUsd: z.number().positive().finite().max(100000).optional(),
+  consensusEnabled: z.boolean().optional(),
   workspacePath: z.string().min(1).max(4_000).optional(),
   workspaceFiles: z.array(z.string().min(1).max(1_000)).max(80).optional(),
 })

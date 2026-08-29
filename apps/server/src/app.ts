@@ -6,6 +6,8 @@ import type { DB } from './db/connection.js'
 import type { SessionBus } from './engine/bus.js'
 import type { SessionManager } from './engine/session-manager.js'
 import { VERSION } from './version.js'
+import { registerOperatorAuth } from './auth.js'
+import { AppError } from './lib/errors.js'
 
 export interface AppDeps {
   config: AppConfig
@@ -19,6 +21,22 @@ const INSTANCE_ID = randomUUID()
 /** Engine DB callbacks used by the runner (kept here to avoid circular imports). */
 export function makeRunnerDbHelpers(db: DB) {
   return {
+    loadSessionOptions(sessionId: string): { budgetUsd?: number; consensusEnabled?: boolean } {
+      const row = db.prepare('SELECT snapshot_json FROM sessions WHERE id=?').get(sessionId) as
+        { snapshot_json: string | null } | undefined
+      return JSON.parse(row?.snapshot_json ?? '{}') ?? {}
+    },
+    saveSessionResult(sessionId: string, key: 'budget' | 'consensus', value: unknown): void {
+      db.prepare(
+        "UPDATE sessions SET snapshot_json=json_set(COALESCE(snapshot_json, '{}'), ?, json(?)) WHERE id=?",
+      ).run(`$.${key}`, JSON.stringify(value), sessionId)
+    },
+    loadResearchEnabled(sessionId: string): boolean {
+      const row = db
+        .prepare("SELECT json_extract(snapshot_json, '$.researchEnabled') AS enabled FROM sessions WHERE id=?")
+        .get(sessionId) as { enabled: number | null } | undefined
+      return row?.enabled !== 0
+    },
     recordUsage(u: {
       sessionId: string
       providerId?: string | null
@@ -129,7 +147,7 @@ export function makeRunnerDbHelpers(db: DB) {
                   m.display_name AS modelName, m.context_window AS contextWindow, p.protocol AS providerProtocol, p.base_url AS providerBaseUrl,
                   p.api_key_encrypted AS apiKeyEncrypted, m.input_per_mtok_usd AS inputPerMTokUsd,
                   m.output_per_mtok_usd AS outputPerMTokUsd
-           FROM models m JOIN providers p ON p.id = m.provider_id WHERE m.id = ?`,
+           FROM models m JOIN providers p ON p.id = m.provider_id WHERE m.id = ? AND m.enabled=1 AND p.enabled=1`,
         )
         .get(modelId) as
         | {
@@ -150,8 +168,7 @@ export function makeRunnerDbHelpers(db: DB) {
     },
     loadWorkspace(sessionId: string): { root: string; files: string[] } | null {
       const row = db.prepare('SELECT workspace_path, workspace_files_json FROM sessions WHERE id=?').get(sessionId) as
-        | { workspace_path: string | null; workspace_files_json: string | null }
-        | undefined
+        { workspace_path: string | null; workspace_files_json: string | null } | undefined
       if (!row?.workspace_path) return null
       let files: string[] = []
       if (row.workspace_files_json) {
@@ -183,16 +200,41 @@ export function makeRunnerDbHelpers(db: DB) {
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: deps.config.logLevel }, ignoreTrailingSlash: true })
+  const app = Fastify({ logger: { level: deps.config.logLevel }, routerOptions: { ignoreTrailingSlash: true } })
 
   const { registerErrorHandlers } = await import('./lib/errors.js')
   registerErrorHandlers(app)
+  app.addHook('onRequest', async (req, reply) => {
+    reply.header('X-Content-Type-Options', 'nosniff')
+    reply.header('Referrer-Policy', 'no-referrer')
+    if (!req.url.startsWith('/api/')) return
+    reply.header('Cache-Control', 'no-store')
+    const site = req.headers['sec-fetch-site']
+    if (site === 'cross-site' || site === 'same-site') {
+      throw new AppError(403, 'cross_origin_denied', 'Cross-origin API requests are not allowed')
+    }
+    // Modern same-origin browser requests also work through the Next dev proxy.
+    // Older browsers use Origin; non-browser API clients may omit both headers.
+    if (site !== 'same-origin' && req.headers.origin) {
+      let matches = false
+      try {
+        const origin = new URL(req.headers.origin)
+        matches = ['http:', 'https:'].includes(origin.protocol) && origin.host === req.headers.host
+      } catch {
+        /* opaque/invalid origins are untrusted */
+      }
+      if (!matches) throw new AppError(403, 'cross_origin_denied', 'Cross-origin API requests are not allowed')
+    }
+  })
+  registerOperatorAuth(app, deps.config)
   app.get('/api/v1/health', async () => ({ ok: true, version: VERSION, instanceId: INSTANCE_ID }))
   app.get('/api/v1/system/health', async () => ({ ok: true, version: VERSION, instanceId: INSTANCE_ID }))
   app.get('/api/v1/system/info', async () => ({
     version: VERSION,
     instanceId: INSTANCE_ID,
     uptimeSeconds: Math.floor(process.uptime()),
+    researchEnabled: deps.config.researchEnabled,
+    maxSessionUsd: deps.config.maxSessionUsd ?? null,
     providers: Number(
       (deps.db.prepare('SELECT COUNT(*) AS n FROM providers WHERE enabled=1').get() as { n: number }).n,
     ),
@@ -215,7 +257,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerMemberCouncilRoutes(app, deps.db)
 
   const { registerSessionRoutes } = await import('./routes/sessions.js')
-  registerSessionRoutes(app, { db: deps.db, bus: deps.bus, sessions: deps.sessions })
+  registerSessionRoutes(app, {
+    db: deps.db,
+    bus: deps.bus,
+    sessions: deps.sessions,
+    researchEnabled: deps.config.researchEnabled,
+    maxSessionUsd: deps.config.maxSessionUsd,
+  })
 
   const { registerActivityRoutes } = await import('./routes/activity.js')
   registerActivityRoutes(app, deps.db)

@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { estimateTokens, fitMessages } from '../engine/context-budgeter.js'
 
+const msg = (role: 'system' | 'user' | 'assistant', content: string) => ({ role, content })
 describe('context budgeter', () => {
-  it('keeps system instructions and newest messages deterministically', () => {
-    const messages = [
-      { role: 'system' as const, content: 'rules' },
-      { role: 'user' as const, content: 'old question' },
-      { role: 'assistant' as const, content: 'old answer' },
-      { role: 'user' as const, content: 'new question' },
-    ]
-    expect(fitMessages(messages, { contextWindow: 8, responseTokens: 1, safetyMargin: 1 })).toEqual([
-      messages[0],
-      messages[3],
-    ])
-    expect(estimateTokens('1234')).toBe(1)
+  it('keeps the system contract and final task while preferring recent context', () => {
+    const fitted = fitMessages(
+      [
+        msg('system', 'SYSTEM CONTRACT ' + 's'.repeat(300)),
+        msg('user', 'old ' + 'x'.repeat(400)),
+        msg('assistant', 'recent'),
+        msg('user', 'FINAL TASK ' + 'q'.repeat(300)),
+      ],
+      { contextWindow: 100, responseTokens: 20, safetyMargin: 10 },
+    )
+    expect(fitted[0]!.role).toBe('system')
+    expect(fitted[0]!.content).toContain('SYSTEM CONTRACT')
+    expect(fitted.at(-1)!.content).toContain('FINAL TASK')
+    expect(fitted.some((m) => m.content.startsWith('old'))).toBe(false)
+    expect(fitted.reduce((sum, m) => sum + estimateTokens(m.content), 0)).toBeLessThanOrEqual(70)
+  })
+
+  it('counts UTF-8 bytes rather than underestimating non-ASCII text', () => {
+    expect(estimateTokens('😀😀😀😀')).toBe(4)
   })
 })

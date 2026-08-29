@@ -1,8 +1,9 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadEnvFile } from '../env.js'
+import { loadConfig } from '../config.js'
 
 const KEYS = ['OPEN_COUNCIL_SECRET_KEY', 'OPEN_COUNCIL_ENV_FILE', 'PORT', 'HOST'] as const
 
@@ -35,5 +36,20 @@ describe('.env loading', () => {
     expect(loadEnvFile(empty)).toBeNull()
     process.env.OPEN_COUNCIL_ENV_FILE = 'nope.env'
     expect(() => loadEnvFile(empty)).toThrow(/could not read env file/)
+  })
+})
+
+describe('runtime config', () => {
+  it('reuses a generated durable vault key and parses the research policy', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'oc-config-'))
+    const env = { DATABASE_PATH: path.join(dir, 'test.db'), WEB_RESEARCH_ENABLED: 'false', OPEN_COUNCIL_SECRET_KEY: '' }
+    const first = loadConfig(env)
+    const second = loadConfig(env)
+    expect(first.hasDurableSecret).toBe(true)
+    expect(second.secretKey).toBe(first.secretKey)
+    expect(statSync(path.join(dir, '.secret_key')).mode & 0o777).toBe(0o600)
+    expect(first.researchEnabled).toBe(false)
+    expect(loadConfig({ ...env, WEB_RESEARCH_ENABLED: '1' }).researchEnabled).toBe(true)
+    expect(() => loadConfig({ ...env, WEB_RESEARCH_ENABLED: 'nope' })).toThrow()
   })
 })

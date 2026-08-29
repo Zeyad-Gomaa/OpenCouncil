@@ -8,6 +8,7 @@ class ActiveSessionController implements SessionController {
   private additionalRounds = 0
   private concludeEarly = false
   private interventions: string[] = []
+  private interventionCount = 0
 
   get signal(): AbortSignal {
     return this.abortController.signal
@@ -21,9 +22,10 @@ class ActiveSessionController implements SessionController {
     return this.additionalRounds
   }
 
-  extend(rounds: number): number {
-    this.additionalRounds += Math.max(1, rounds)
-    return this.additionalRounds
+  extend(rounds: number): { added: number; total: number } {
+    const previous = this.additionalRounds
+    this.additionalRounds = Math.min(50, previous + Math.max(1, rounds))
+    return { added: this.additionalRounds - previous, total: this.additionalRounds }
   }
 
   conclude(): void {
@@ -31,6 +33,8 @@ class ActiveSessionController implements SessionController {
   }
 
   intervene(content: string): void {
+    if (this.interventionCount >= 50) throw new Error('Session directive limit reached (50).')
+    this.interventionCount++
     this.interventions.push(content)
   }
 
@@ -55,6 +59,12 @@ export class SessionManager {
     private runner: SessionRunner,
     private maxConcurrentSessions = 4,
   ) {}
+
+  /** Reject work before inserting a row; queued work is deliberately bounded. */
+  assertCapacity(): void {
+    if (this.pending.length >= 32)
+      throw Object.assign(new Error('Session queue is full (32 waiting).'), { statusCode: 429, code: 'queue_full' })
+  }
 
   /** Kicks off deliberation for a pre-created session row. */
   startSession(sessionId: string, councilId: string, topic: string): void {
@@ -103,11 +113,10 @@ export class SessionManager {
     return true
   }
 
-  extendSession(sessionId: string, additionalRounds: number): boolean {
+  extendSession(sessionId: string, additionalRounds: number): { added: number; total: number } | null {
     const ctrl = this.controllers.get(sessionId)
-    if (!ctrl) return false
-    ctrl.extend(additionalRounds)
-    return true
+    if (!ctrl) return null
+    return ctrl.extend(additionalRounds)
   }
 
   concludeSession(sessionId: string, _reason?: string): boolean {
@@ -117,11 +126,15 @@ export class SessionManager {
     return true
   }
 
-  interveneSession(sessionId: string, content: string): boolean {
+  interveneSession(sessionId: string, content: string): 'ok' | 'missing' | 'limit' {
     const ctrl = this.controllers.get(sessionId)
-    if (!ctrl) return false
-    ctrl.intervene(content)
-    return true
+    if (!ctrl) return 'missing'
+    try {
+      ctrl.intervene(content)
+      return 'ok'
+    } catch {
+      return 'limit'
+    }
   }
 
   isRunning(sessionId: string): boolean {

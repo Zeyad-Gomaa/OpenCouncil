@@ -41,6 +41,21 @@ function HomeContent() {
   const [sessions, setSessions] = useState<SessionDTO[]>([])
   const [councilId, setCouncilId] = useState('')
   const [topic, setTopic] = useState(initialTopic)
+  const [researchEnabled, setResearchEnabled] = useState(true)
+  const [budgetUsd, setBudgetUsd] = useState('')
+  const [consensusEnabled, setConsensusEnabled] = useState(false)
+  const [maxSessionUsd, setMaxSessionUsd] = useState<number | null>(null)
+  const [researchAllowed, setResearchAllowed] = useState(true)
+  useEffect(() => {
+    apiGet<{ researchEnabled: boolean; maxSessionUsd: number | null }>('/system/info')
+      .then((info) => {
+        setResearchAllowed(info.researchEnabled !== false)
+        setMaxSessionUsd(info.maxSessionUsd)
+      })
+      .catch(() => {
+        /* the API still enforces the server policy */
+      })
+  }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -99,6 +114,9 @@ function HomeContent() {
       const s = await apiSend<{ id: string }>('/sessions', 'POST', {
         councilId,
         topic: topic.trim(),
+        researchEnabled: researchAllowed && researchEnabled,
+        budgetUsd: budgetUsd ? Number(budgetUsd) : undefined,
+        consensusEnabled,
         ...(workspacePath.trim() ? { workspacePath: workspacePath.trim() } : {}),
         ...(files.length ? { workspaceFiles: files } : {}),
       })
@@ -160,6 +178,8 @@ function HomeContent() {
               <div className="chat-input-box">
                 <textarea
                   placeholder="Ask anything…"
+                  aria-label="Question for the council"
+                  maxLength={8000}
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
                   onKeyDown={handleKey}
@@ -209,6 +229,57 @@ function HomeContent() {
                   </button>
                 </div>
               )}
+
+              <div className="field-row">
+                <label htmlFor="budget-usd">Session budget (USD, optional)</label>
+                <input
+                  id="budget-usd"
+                  className="input"
+                  type="number"
+                  min="0.000001"
+                  step="0.01"
+                  placeholder={maxSessionUsd ? `Server cap $${maxSessionUsd}` : 'No requested cap'}
+                  value={budgetUsd}
+                  onChange={(e) => setBudgetUsd(e.target.value)}
+                />
+                <span className="input-hint">
+                  Conservative estimate. Calls with unknown pricing are blocked when a cap applies; provider billing may
+                  differ.
+                </span>
+              </div>
+              <div className="research-option">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={consensusEnabled}
+                    disabled={busy}
+                    onChange={(e) => setConsensusEnabled(e.target.checked)}
+                  />
+                  Anonymous peer ranking
+                </label>
+                <span className="input-hint">
+                  Adds one evaluation call per member and reports scores, dissent, uncertainty, and ballot coverage.
+                </span>
+              </div>
+
+              <div className="research-option">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={researchAllowed && researchEnabled}
+                    disabled={busy || !researchAllowed}
+                    onChange={(e) => setResearchEnabled(e.target.checked)}
+                  />
+                  Search the web
+                </label>
+                <span className="input-hint">
+                  {!researchAllowed
+                    ? 'Disabled by the server operator.'
+                    : researchEnabled
+                      ? 'Your question is sent to external search services. Turn off for private topics.'
+                      : 'No web searches. Your question and attached files still go to your selected models.'}
+                </span>
+              </div>
 
               {attachOpen && (
                 <div className="workspace-attach">

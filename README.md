@@ -70,6 +70,7 @@ Restart the process after an update. A running binary does not pick up a new
 
 ```bash
 export OPEN_COUNCIL_SECRET_KEY=$(openssl rand -hex 32)
+export OPEN_COUNCIL_OPERATOR_TOKEN=$(openssl rand -hex 32)
 docker compose up -d      # http://localhost:4311, data in a named volume
 ```
 
@@ -88,7 +89,7 @@ Server source changes need `npm run build:server` to take effect.
 
 ```bash
 cp .env.example .env
-# set OPEN_COUNCIL_SECRET_KEY so stored provider keys survive a restart
+# optionally set OPEN_COUNCIL_SECRET_KEY to manage the encryption key yourself
 ```
 
 Then in Settings:
@@ -102,14 +103,21 @@ Then in Settings:
    ids match.
 3. **Members.** Bind a model to a named seat and, if you want, a persona
    prompt.
-4. **Councils.** Pick members, a strategy, rounds, and an optional moderator
-   who writes the final synthesis.
+4. **Councils.** Start from Decision Board, Independent Panel, Research
+   Synthesis, Code Review, Architecture Review, or Security Red Team; then pick
+   members and an optional moderator who writes the final synthesis.
 
-On Home, choose a council, type a question, and send. Optionally **Attach
+On Home, choose a council, type a question, and send. You can set a conservative USD budget and enable anonymous peer rankings. Optionally **Attach
 folder** and point at an absolute path this process can read
 (`/Users/you/project`). Agents then get a file tree briefing and read-only
 tools (`list_dir`, `read_file`, `grep`). They cannot write. Use this for code
 review, architecture, and red-team councils.
+
+Council prompts use a shared instruction contract: operator tasks remain
+separate from untrusted research, peer output, and workspace text; each strategy
+adds a round-specific objective; and the moderator records dissent and
+uncertainty instead of inventing agreement. See [docs/PROMPTS.md](docs/PROMPTS.md)
+for the prompt and evaluation design.
 
 ## How a council runs
 
@@ -129,9 +137,11 @@ review, architecture, and red-team councils.
    transcript as it develops. You watch live over SSE. Usage (tokens, latency,
    estimated cost) is metered per message.
 
-Each session starts with web research (DuckDuckGo, then Wikipedia; Tavily,
+By default, each session starts with web research (DuckDuckGo, then Wikipedia; Tavily,
 Brave, or SearXNG if you set a key). Research can include page results, images,
-and YouTube links.
+and YouTube links. Turn off **Search the web** before submitting private questions,
+or set `WEB_RESEARCH_ENABLED=false` to disable session research server-wide, including
+headless CLI runs. Questions and workspace excerpts still go to your selected models.
 
 ## The chamber
 
@@ -145,7 +155,9 @@ and YouTube links.
   parser error into the page.
 
 `/activity` shows totals (sessions, messages, tokens, spend), a daily series,
-and per-member / per-model / per-provider breakdowns.
+and per-member / per-model / per-provider breakdowns. Choose 7, 30, 90, or 365 UTC calendar
+days and **Export CSV** for individual usage records. Every dashboard section uses
+the selected window. Calls without complete pricing are flagged, not counted as free.
 
 ## Configuration
 
@@ -153,14 +165,18 @@ OpenCouncil reads `.env` from the working directory at startup. Real
 environment variables win over the file, and CLI flags win over both. Point at
 a different file with `OPEN_COUNCIL_ENV_FILE`.
 
-| Variable                  | Flag         | Default                 | Purpose                                                                                                      |
-| ------------------------- | ------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `OPEN_COUNCIL_SECRET_KEY` |              | ephemeral               | Master key encrypting provider API keys at rest. Set this, or stored keys become unreadable after a restart. |
-| `HOST`                    | `-H, --host` | `127.0.0.1`             | Bind address. Use `0.0.0.0` only behind an authenticating proxy.                                             |
-| `PORT`                    | `-p, --port` | `4311`                  | HTTP port.                                                                                                   |
-| `DATABASE_PATH`           | `--db`       | `./data/opencouncil.db` | SQLite database file.                                                                                        |
-| `SEED_DEMO_COUNCIL`       | `--no-seed`  | `true`                  | Seed the mock demo council on an empty database.                                                             |
-| `LOG_LEVEL`               |              | `info`                  | `fatal` / `error` / `warn` / `info` / `debug` / `trace`                                                      |
+| Variable                  | Flag         | Default                 | Purpose                                                                                                                                        |
+| ------------------------- | ------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPEN_COUNCIL_SECRET_KEY` |              | persisted key file      | Master key encrypting provider API keys. If unset, a random key is stored at `<database-directory>/.secret_key`. Back it up with the database. |
+| `HOST`                    | `-H, --host` | `127.0.0.1`             | Bind address. Use `0.0.0.0` only behind an authenticating proxy.                                                                               |
+| `PORT`                    | `-p, --port` | `4311`                  | HTTP port.                                                                                                                                     |
+| `DATABASE_PATH`           | `--db`       | `./data/opencouncil.db` | SQLite database file.                                                                                                                          |
+| `SEED_DEMO_COUNCIL`       | `--no-seed`  | `true`                  | Seed the mock demo council on an empty database.                                                                                               |
+| `LOG_LEVEL`               |              | `info`                  | `fatal` / `error` / `warn` / `info` / `debug` / `trace`                                                                                        |
+
+`WEB_RESEARCH_ENABLED` defaults to `true`. Set it to `false` (or `0`) to block
+session research regardless of the request or UI setting. Model discovery may still
+contact provider catalogs; the browser loads Mermaid from a CDN when rendering diagrams.
 
 Optional research backends: `TAVILY_API_KEY`, `BRAVE_API_KEY`, `SEARXNG_URL`.
 If none are set, research still runs through DuckDuckGo and Wikipedia.
@@ -191,8 +207,9 @@ provider is deleted.
 
 The default database is `./data/opencouncil.db`. Set `DATABASE_PATH` or use
 `--db` to relocate it. Stop the process before copying the database and keep
-`OPEN_COUNCIL_SECRET_KEY` backed up with it. Neither is useful without the
-other. Schema migrations run automatically at startup and are recorded in
+`OPEN_COUNCIL_SECRET_KEY` (or the generated `.secret_key` file beside the database)
+backed up with it. Encrypted provider credentials need the matching key; transcripts
+and configuration are not encrypted. Schema migrations run automatically at startup and are recorded in
 `schema_migrations`.
 
 ## Troubleshooting
@@ -202,9 +219,9 @@ an older binary. Stop it and start again (`npx opencouncil` or `npm start`)
 from a tree that has been built. The UI lists models with
 `POST /api/v1/providers/:id/discover-models`.
 
-**Stored API keys stopped working after a restart.** `OPEN_COUNCIL_SECRET_KEY`
-was missing or changed. Set it in `.env` to a stable value and re-enter the
-keys once.
+**Stored API keys stopped working after a restart.** The configured key changed,
+the generated `.secret_key` was lost, or key persistence failed (startup warns).
+Restore the matching key from backup, or set a stable key and re-enter provider credentials.
 
 **Install from `github:` as a global package is broken.** Use the archive URL
 above, not `npm install -g github:...`.
@@ -243,15 +260,27 @@ vulnerability. Architecture notes live in [docs/ARCHITECTURE.md](docs/ARCHITECTU
 - Provider keys are encrypted at rest. The API never returns them, only a
   `hasApiKey` flag.
 - The server binds `127.0.0.1` by default. If you expose it, put it behind a
-  reverse proxy with authentication. OpenCouncil has no built-in multi-user
+  reverse proxy as appropriate. OpenCouncil provides optional single-operator authentication but no multi-user
   auth yet (see the roadmap).
-- No telemetry. Outbound requests go only to the provider base URLs you
-  configure, plus the research backends you enable (or the public DuckDuckGo
-  / Wikipedia fallback).
+- The server sends requests to configured models, enabled research services,
+  and model catalogs (including the OpenRouter pricing overlay). The browser uses
+  a Mermaid CDN and loads external transcript images only after you click to load them.
+  Next.js has its own build/development telemetry controls.
 - Configuration exports contain secret-presence metadata only, never raw
   provider keys. Importing a config never restores a secret.
-- An attached workspace is read-only. Paths cannot escape the folder you
-  pointed at. The process refuses to attach a filesystem root.
+- Workspace tools are read-only. Real-path checks reject symlink escapes; tree walks
+  skip symlinks and common credential files are blocked. Selected files are priorities,
+  not an exclusive allowlist. Attaching a file grants access to its parent directory.
+  Attach only trusted, non-secret folders; this is not an OS-level sandbox.
+- Optional single-operator authentication protects API, SSE, and downloads; allowed-host checks and cross-origin browser rejection add request-boundary protection
+  or protect against malicious local processes or DNS rebinding.
+- Docker Compose publishes on loopback by default. Change the mapping only behind
+  an authenticating reverse proxy. The Docker build context excludes secrets and local data.
+
+## Audit and next steps
+
+See [docs/AUDIT.md](docs/AUDIT.md) for the researched audit, verified fixes,
+remaining risks, and implementation priorities.
 
 ## License
 

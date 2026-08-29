@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { encryptSecret } from './vault/crypto.js'
 import type { DB } from './db/connection.js'
+import type { AppConfig } from './config.js'
 
 interface Args {
   command: 'serve' | 'doctor' | 'provider' | 'model' | 'member' | 'council' | 'session' | 'usage'
@@ -158,11 +159,12 @@ function printHelp(): void {
 
   Environment (read from ./.env if present; real env vars win, flags win over both):
     OPEN_COUNCIL_SECRET_KEY  Master key encrypting provider API keys at rest
-                             (required for keys to survive restarts)
+                             (otherwise persisted beside the database in .secret_key)
     OPEN_COUNCIL_ENV_FILE    Alternate env file path (default ./.env)
     HOST, PORT               Bind address and port
     DATABASE_PATH            SQLite database file
     SEED_DEMO_COUNCIL        Set to "false" to disable seeding
+    WEB_RESEARCH_ENABLED     Set to "false" to prevent session web searches
     LOG_LEVEL                fatal|error|warn|info|debug|trace
 
   Then open http://localhost:<port> — the seeded mock council lets you watch a
@@ -190,6 +192,7 @@ function runHeadless(
     close(): void
   },
   packageRoot: string,
+  config: AppConfig,
 ): boolean {
   const value = (name: string, fallback?: string): string | undefined => {
     const v = args.options[name]
@@ -357,7 +360,8 @@ function runHeadless(
           existsSync(path.join(packageRoot, 'apps', 'web', 'out', 'index.html'))
             ? 'ok'
             : 'missing',
-        vault: process.env.OPEN_COUNCIL_SECRET_KEY ? 'durable-key-configured' : 'ephemeral-key-warning',
+        vault: config.hasDurableSecret ? 'durable-key-configured' : 'ephemeral-key-warning',
+        webResearch: config.researchEnabled ? 'enabled' : 'disabled',
       },
       args.json,
     )
@@ -366,7 +370,7 @@ function runHeadless(
   return args.command !== 'serve'
 }
 
-async function runLocalCouncil(args: Args, db: DB): Promise<void> {
+async function runLocalCouncil(args: Args, db: DB, config: AppConfig): Promise<void> {
   const councilRef = typeof args.options.council === 'string' ? args.options.council : undefined
   const topic = args.positionals.join(' ').trim()
   if (!councilRef || !topic) throw new Error('council run requires --council <id|name> and a question')
@@ -386,7 +390,7 @@ async function runLocalCouncil(args: Args, db: DB): Promise<void> {
     sessionId,
     council.id,
     topic,
-    JSON.stringify({ ...(councilConfig as object), members }),
+    JSON.stringify({ ...(councilConfig as object), members, researchEnabled: config.researchEnabled }),
   )
   const { SessionBus } = await import('./engine/bus.js')
   const { SessionRunner } = await import('./engine/runner.js')
@@ -405,6 +409,11 @@ async function runLocalCouncil(args: Args, db: DB): Promise<void> {
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
     loadWorkspace: helpers.loadWorkspace,
+    loadResearchEnabled: helpers.loadResearchEnabled,
+    loadSessionOptions: helpers.loadSessionOptions,
+    saveSessionResult: helpers.saveSessionResult,
+    maxSessionUsd: config.maxSessionUsd,
+    researchEnabled: config.researchEnabled,
   })
   const unsubscribe = bus.subscribe(sessionId, (event) => console.log(JSON.stringify(event)))
   try {
@@ -480,11 +489,11 @@ export async function main(): Promise<void> {
   }
 
   if (args.command === 'council' && args.subcommand === 'run') {
-    await runLocalCouncil(args, db)
+    await runLocalCouncil(args, db, config)
     return
   }
 
-  if (args.command !== 'serve' && runHeadless(args, db, packageRoot)) return
+  if (args.command !== 'serve' && runHeadless(args, db, packageRoot, config)) return
 
   const { SessionBus } = await import('./engine/bus.js')
   const { SessionRunner } = await import('./engine/runner.js')
@@ -508,6 +517,11 @@ export async function main(): Promise<void> {
     loadModelForChat: helpers.loadModelForChat,
     updateSessionStatus: helpers.updateSessionStatus,
     loadWorkspace: helpers.loadWorkspace,
+    loadResearchEnabled: helpers.loadResearchEnabled,
+    loadSessionOptions: helpers.loadSessionOptions,
+    saveSessionResult: helpers.saveSessionResult,
+    maxSessionUsd: config.maxSessionUsd,
+    researchEnabled: config.researchEnabled,
   })
   const sessions = new SessionManager(bus, runner)
 

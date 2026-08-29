@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { apiGet } from '../lib/api'
+import { API, apiGet } from '../lib/api'
 import type { ActivityStats, GroupedUsage } from '@opencouncil/shared'
 
 interface StatsResponse extends ActivityStats {
@@ -21,14 +21,33 @@ function timeAgo(iso: string): string {
 export default function ActivityPage() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [days, setDays] = useState(30)
+  const [displayedDays, setDisplayedDays] = useState(30)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiGet<StatsResponse>('/activity/stats?days=30')
-      .then(setStats)
-      .catch((e) => setError(String(e)))
-  }, [])
+    let ignore = false
+    setLoading(true)
+    setError(null)
+    apiGet<StatsResponse>(`/activity/stats?days=${days}`)
+      .then((value) => {
+        if (!ignore) {
+          setStats(value)
+          setDisplayedDays(days)
+        }
+      })
+      .catch((e) => {
+        if (!ignore) setError(String(e))
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [days])
 
-  if (error) {
+  if (error && !stats) {
     return (
       <div>
         <h1>Activity</h1>
@@ -64,9 +83,39 @@ export default function ActivityPage() {
         <div>
           <p className="eyebrow">Usage</p>
           <h1>Activity</h1>
-          <p className="subtitle">Tokens, spend, and actions — last 30 days.</p>
+          <p className="subtitle">
+            Tokens, estimated spend, and actions — last {displayedDays} UTC calendar days, including today.
+          </p>
+        </div>
+        <div className="activity-controls">
+          <label htmlFor="activity-days">Period</label>
+          <select id="activity-days" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {[7, 30, 90, 365].map((n) => (
+              <option key={n} value={n}>
+                {n} days
+              </option>
+            ))}
+          </select>
+          <a className="btn" href={`${API}/activity/export?days=${days}`} download>
+            Export CSV
+          </a>
         </div>
       </div>
+      {loading && (
+        <p role="status" className="muted">
+          Updating activity…
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="form-error">
+          {error}
+        </p>
+      )}
+      {(stats.totals.unpricedCalls ?? 0) > 0 && (
+        <p className="notice">
+          {stats.totals.unpricedCalls} calls have no price estimate. Displayed spend excludes those costs.
+        </p>
+      )}
 
       {/* Stats */}
       <div className="stat-row">

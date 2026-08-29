@@ -1,9 +1,11 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   buildWorkspaceBriefing,
+  listTree,
+  grepWorkspace,
   matchGlob,
   normalizeWorkspace,
   parseToolCalls,
@@ -18,6 +20,7 @@ let dir: string
 beforeEach(() => {
   dir = path.join(os.tmpdir(), `oc-ws-${Date.now()}`)
   mkdirSync(path.join(dir, 'src'), { recursive: true })
+  dir = realpathSync(dir)
   writeFileSync(path.join(dir, 'README.md'), '# Hello\n')
   writeFileSync(
     path.join(dir, 'src', 'app.ts'),
@@ -30,6 +33,50 @@ afterEach(() => {
 })
 
 describe('workspace', () => {
+  it('rejects relative paths and root aliases', () => {
+    expect(() => resolveWorkspaceRoot('.')).toThrow(/absolute/)
+    symlinkSync('/', path.join(dir, 'root-link'))
+    expect(() => resolveWorkspaceRoot(path.join(dir, 'root-link'))).toThrow(/root/)
+  })
+
+  it('blocks external file and directory symlinks and skips cycles', () => {
+    const outside = dir + '-outside'
+    mkdirSync(outside)
+    writeFileSync(path.join(outside, 'secret.ts'), 'outside-secret')
+    try {
+      symlinkSync(path.join(outside, 'secret.ts'), path.join(dir, 'linked.ts'))
+      symlinkSync(outside, path.join(dir, 'linked-dir'))
+      symlinkSync(dir, path.join(dir, 'src', 'cycle'))
+      expect(() => readWorkspaceFile(dir, 'linked.ts')).toThrow(/escapes/)
+      expect(() => readWorkspaceFile(dir, 'linked-dir/secret.ts')).toThrow(/escapes/)
+      expect(() => listTree(dir, 'linked-dir')).toThrow(/escapes/)
+      expect(listTree(dir).join(' ')).not.toMatch(/linked|cycle/)
+      expect(buildWorkspaceBriefing({ root: dir, files: ['linked.ts'] })).not.toContain('outside-secret')
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks secrets via direct reads and aliases but permits environment examples', () => {
+    for (const name of ['.env', '.env.local', '.secret_key', 'credentials.json', 'private.pem', '.npmrc']) {
+      writeFileSync(path.join(dir, name), 'credential-sentinel')
+      expect(() => readWorkspaceFile(dir, name)).toThrow(/sensitive/)
+    }
+    symlinkSync(path.join(dir, 'credentials.json'), path.join(dir, 'innocent.json'))
+    expect(() => readWorkspaceFile(dir, 'innocent.json')).toThrow(/sensitive/)
+    writeFileSync(path.join(dir, '.env.example'), 'KEY=example')
+    expect(listTree(dir)).toContain('.env.example')
+    expect(readWorkspaceFile(dir, '.env.example')).toContain('KEY=example')
+    expect(grepWorkspace(dir, 'credential-sentinel')).toEqual([])
+  })
+
+  it('treats model-generated grep patterns as literal text', () => {
+    writeFileSync(path.join(dir, 'pattern.ts'), 'literal (a+)+$ and Foo.Bar')
+    expect(grepWorkspace(dir, '(a+)+$')).toHaveLength(1)
+    expect(grepWorkspace(dir, 'foo.bar')).toHaveLength(1)
+    expect(grepWorkspace(dir, 'fooXbar')).toHaveLength(0)
+  })
+
   it('refuses a filesystem root and missing paths', () => {
     expect(() => resolveWorkspaceRoot('/')).toThrow(/root/)
     expect(() => resolveWorkspaceRoot(path.join(dir, 'nope'))).toThrow(/not found/)
@@ -74,5 +121,21 @@ describe('workspace', () => {
     expect(calls.map((c) => c.name)).toEqual(['read_file', 'grep'])
     expect(calls[0]?.path).toBe('src/app.ts')
     expect(stripToolBlocks(text)).toBe('Need the file.')
+  })
+
+  it('rejects oversized or invalid model-authored tool arguments', () => {
+    const text = [
+      `\`\`\`tool\n${JSON.stringify({ name: 'read_file', path: 'x'.repeat(1001) })}\n\`\`\``,
+      `\`\`\`tool\n${JSON.stringify({ name: 'grep', pattern: 'ok', startLine: -1 })}\n\`\`\``,
+      `\`\`\`tool\n${JSON.stringify({ name: 'read_file', path: 'src/app.ts', startLine: 1, endLine: 3000 })}\n\`\`\``,
+    ].join('\n')
+    expect(parseToolCalls(text)).toEqual([])
+  })
+
+  it('bounds tool output returned to a model', () => {
+    writeFileSync(path.join(dir, 'large.ts'), 'x'.repeat(40_000))
+    const result = runTool(dir, { name: 'read_file', path: 'large.ts' })
+    expect(result.length).toBeLessThan(30_100)
+    expect(result).toContain('tool result truncated')
   })
 })

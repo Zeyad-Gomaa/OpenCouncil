@@ -15,8 +15,8 @@ fs.cpSync(source, target, {
   recursive: true,
   filter: (src) => {
     const base = path.basename(src)
-    // macOS/iCloud duplicate folders ("404 2", "_next 3") must not ship.
-    return !/ \d+$/.test(base)
+    // macOS/iCloud duplicate names ("404 2", "logo 2.png") must not ship.
+    return !/ \d+(?=\.|$)/.test(base)
   },
 })
 console.log(`[opencouncil] copied static UI to ${path.relative(process.cwd(), target)}`)

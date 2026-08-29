@@ -5,3 +5,4 @@ apps/web/out/
 packages/shared/dist/
 package-lock.json
 data/
+apps/web/next-env.d.ts

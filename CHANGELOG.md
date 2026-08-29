@@ -8,6 +8,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional single-operator cookie/bearer authentication, allowed-host validation, sign-in UI, and login throttling.
+- Conservative per-session USD reservations and server caps with queue/directive/extension/provider-attempt bounds.
+- Anonymous peer ranking with strict ballots, deterministic scoring, raw dissent, and coverage reporting.
+- Six curated council templates for decisions, independent opinions, research,
+  code review, architecture, and security review.
+- A shared prompt contract with explicit trust boundaries, round-specific
+  strategy objectives, structured moderator decisions, and local-code tool-flow tests.
+
+### Changed
+
+- Upgraded to Fastify 5.12, Next.js 16.3, React 19.2, Node 22 types, and current build tooling; Vitest remains on compatible 3.2.7.
+- Builds no longer fetch Google Fonts; containers run as a non-root user and include a healthcheck.
+- Prompt context fitting preserves the system contract and final task, and
+  workspace tool arguments/results now have explicit bounds.
+
+### Added
+
+- Per-session web-research opt-out plus `WEB_RESEARCH_ENABLED=false` enforcement
+  for API and CLI sessions.
+- Usage CSV export and 7/30/90/365-day dashboard filters with unpriced-call warnings.
+- Research-backed audit report and prioritized follow-up roadmap.
+
 - Settings can pull live model availability and published $/MTok pricing from
   a provider (OpenRouter natively; OpenAI/Anthropic/Google/Groq/xAI/etc. via
   their model list APIs plus an OpenRouter price overlay).
@@ -28,6 +50,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Adding a provider opens the live catalog so you can enroll models immediately.
 
 ### Fixed
+
+- Workspace symlink escapes, direct access to common credentials, and unsafe
+  model-generated regex searches. Grep now uses literal matching.
+- Invalid API payloads and parser errors now return the appropriate 4xx status.
+- Disabled models/providers are no longer invoked; councils with no successful
+  responses fail; final cancellation is checked before completion is persisted.
+- Retry-After handling, cancellation before HTTP dispatch, and retry-listener cleanup.
+- SSE reconnections resume after the latest event without double-counting usage.
+- Reruns record current configuration and reject deleted councils without creating a session.
+- Activity totals, breakdowns, logs, and CSV export share one UTC reporting window.
+- Untrusted Markdown URL schemes are blocked; external images require a click to load.
+- Cross-origin browser API requests are rejected. Docker Compose binds loopback,
+  and Docker/Git ignore rules exclude common local secrets.
+- Documentation now describes persisted vault keys, actual API behavior, and outbound requests.
+- A blank optional key in the sample environment file now uses the persisted-key fallback.
+- Static packaging now excludes iCloud duplicate filenames even when the copy
+  suffix appears before a file extension.
 
 - Mermaid diagrams no longer dump "Syntax error in text / mermaid version …"
   into the page. Invalid LLM diagrams fall back to source; leftover error SVGs

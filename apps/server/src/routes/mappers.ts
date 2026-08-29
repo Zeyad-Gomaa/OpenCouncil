@@ -151,7 +151,22 @@ export function sessionToDTO(r: {
   message_count?: number
   workspace_path?: string | null
   workspace_files_json?: string | null
+  snapshot_json?: string | null
 }): SessionDTO {
+  let options: Pick<SessionDTO, 'budgetUsd' | 'consensusEnabled' | 'budget' | 'consensus'> = {}
+  let researchEnabled = true
+  try {
+    const snapshot = JSON.parse(r.snapshot_json ?? '{}') ?? {}
+    researchEnabled = snapshot.researchEnabled !== false
+    options = {
+      budgetUsd: snapshot.budgetUsd ?? null,
+      consensusEnabled: snapshot.consensusEnabled === true,
+      budget: snapshot.budget,
+      consensus: snapshot.consensus,
+    }
+  } catch {
+    /* legacy snapshots default to enabled */
+  }
   let workspaceFiles: string[] | undefined
   if (r.workspace_files_json) {
     try {
@@ -173,6 +188,8 @@ export function sessionToDTO(r: {
     messageCount: r.message_count,
     workspacePath: r.workspace_path ?? null,
     workspaceFiles,
+    researchEnabled,
+    ...options,
     createdAt: r.created_at,
   }
 }

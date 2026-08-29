@@ -41,10 +41,19 @@ export const mockAdapter: ProviderAdapter = {
     const systemMsg = opts.messages.find((m) => m.role === 'system')?.content ?? ''
     const lastUser = [...opts.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
     const persona = systemMsg.split('—')[0]?.trim() || 'Member'
-    const isSynthesis = /you are the moderator of an ai council/i.test(systemMsg) || /\bsynthesize\b/i.test(systemMsg)
+    const isSynthesis =
+      /you are the moderator of an ai council/i.test(systemMsg) ||
+      /chair of a decision council/i.test(systemMsg) ||
+      /\bsynthesize\b/i.test(systemMsg)
 
     let text: string
-    if (isSynthesis) {
+    if (systemMsg.includes('PEER_RANKING_V1')) {
+      const input = JSON.parse(lastUser) as { candidates: { id: string; content: string }[] }
+      text = JSON.stringify({
+        ranking: input.candidates.map((c) => c.id),
+        rationale: 'Ranked for concrete reasoning and explicit uncertainty; agreement is not evidence of correctness.',
+      })
+    } else if (isSynthesis) {
       text =
         `**The Council Convenes — Synthesis**\n\n` +
         `After full deliberation on "${lastUser.slice(0, 120)}", the council finds broad agreement on three points:\n\n` +

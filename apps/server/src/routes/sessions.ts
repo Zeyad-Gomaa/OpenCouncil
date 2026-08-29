@@ -18,6 +18,8 @@ export interface SessionRouteDeps {
   db: DB
   bus: SessionBus
   sessions: SessionManager
+  maxSessionUsd?: number
+  researchEnabled?: boolean
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
@@ -36,7 +38,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }
   })
 
-  function snapshotForCouncil(councilId: string): string {
+  function snapshotForCouncil(
+    councilId: string,
+    researchEnabled = true,
+    budgetUsd?: number,
+    consensusEnabled = false,
+  ): string {
     const council = db
       .prepare('SELECT id, name, description, strategy, rounds, moderator_member_id FROM councils WHERE id = ?')
       .get(councilId) as Record<string, unknown> | undefined
@@ -51,7 +58,16 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       WHERE cm.council_id = ? ORDER BY cm.position`,
       )
       .all(councilId)
-    return JSON.stringify({ ...council, members })
+    return JSON.stringify({
+      ...council,
+      members,
+      budgetUsd:
+        Math.min(budgetUsd ?? Infinity, deps.maxSessionUsd ?? Infinity) === Infinity
+          ? null
+          : Math.min(budgetUsd ?? Infinity, deps.maxSessionUsd ?? Infinity),
+      consensusEnabled,
+      researchEnabled: deps.researchEnabled !== false && researchEnabled,
+    })
   }
 
   app.get('/api/v1/sessions', async (req) => {
@@ -120,8 +136,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       }
     }
 
+    sessions.assertCapacity()
     const id = randomUUID()
-    const snapshot = snapshotForCouncil(body.councilId)
+    const snapshot = snapshotForCouncil(body.councilId, body.researchEnabled, body.budgetUsd, body.consensusEnabled)
     db.prepare(
       `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
        VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
@@ -177,6 +194,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       db.prepare(
         "UPDATE sessions SET status='cancelled', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
       ).run(id)
+      bus.publish({ type: 'session.cancelled', sessionId: id })
     }
     return { ok: true }
   })
@@ -186,10 +204,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const row = db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as never | undefined
     if (!row) throw new AppError(404, 'not_found', 'session not found')
     const body = sessionExtendSchema.parse(req.body ?? {})
-    const ok = sessions.extendSession(id, body.additionalRounds)
-    if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
-    logActivity(db, 'session.extended', { sessionId: id, additionalRounds: body.additionalRounds })
-    return { ok: true, extendedRounds: body.additionalRounds }
+    const extension = sessions.extendSession(id, body.additionalRounds)
+    if (!extension) throw new AppError(400, 'invalid_state', 'session is not currently running')
+    if (extension.added === 0) throw new AppError(429, 'limit_reached', 'Session extension limit reached (50 rounds).')
+    logActivity(db, 'session.extended', { sessionId: id, additionalRounds: extension.added })
+    bus.publish({
+      type: 'session.extended',
+      sessionId: id,
+      additionalRounds: extension.added,
+      totalRounds: extension.total,
+    })
+    return { ok: true, extendedRounds: extension.added, totalExtendedRounds: extension.total }
   })
 
   app.post('/api/v1/sessions/:id/conclude', async (req) => {
@@ -208,8 +233,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const row = db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as never | undefined
     if (!row) throw new AppError(404, 'not_found', 'session not found')
     const body = sessionInterveneSchema.parse(req.body)
-    const ok = sessions.interveneSession(id, body.content)
-    if (!ok) throw new AppError(400, 'invalid_state', 'session is not currently running')
+    const intervention = sessions.interveneSession(id, body.content)
+    if (intervention === 'missing') throw new AppError(400, 'invalid_state', 'session is not currently running')
+    if (intervention === 'limit') throw new AppError(429, 'limit_reached', 'Session directive limit reached (50).')
 
     const lastRound = Number(
       (
@@ -247,67 +273,54 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return msgDTO
   })
 
-  app.post('/api/v1/sessions/:id/clone', async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const source = db
-      .prepare('SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?')
-      .get(id) as
-      | {
-          council_id: string
-          topic: string
-          snapshot_json: string | null
-          workspace_path: string | null
-          workspace_files_json: string | null
-        }
-      | undefined
-    if (!source) throw new AppError(404, 'not_found', 'session not found')
-    const cloneId = randomUUID()
-    db.prepare(
-      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
-       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
-    ).run(
-      cloneId,
-      source.council_id,
-      source.topic,
-      source.snapshot_json,
-      source.workspace_path,
-      source.workspace_files_json,
-    )
-    sessions.startSession(cloneId, source.council_id, source.topic)
-    reply.code(202)
-    return sessionToDTO(db.prepare('SELECT * FROM sessions WHERE id=?').get(cloneId) as never)
-  })
-
-  app.post('/api/v1/sessions/:id/rerun', async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const source = db
-      .prepare('SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?')
-      .get(id) as
-      | {
-          council_id: string
-          topic: string
-          snapshot_json: string | null
-          workspace_path: string | null
-          workspace_files_json: string | null
-        }
-      | undefined
-    if (!source) throw new AppError(404, 'not_found', 'session not found')
-    const rerunId = randomUUID()
-    db.prepare(
-      `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
-       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
-    ).run(
-      rerunId,
-      source.council_id,
-      source.topic,
-      source.snapshot_json,
-      source.workspace_path,
-      source.workspace_files_json,
-    )
-    sessions.startSession(rerunId, source.council_id, source.topic)
-    reply.code(202)
-    return sessionToDTO(db.prepare('SELECT * FROM sessions WHERE id=?').get(rerunId) as never)
-  })
+  for (const action of ['clone', 'rerun']) {
+    app.post(`/api/v1/sessions/:id/${action}`, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const source = db
+        .prepare(
+          'SELECT council_id, topic, snapshot_json, workspace_path, workspace_files_json FROM sessions WHERE id=?',
+        )
+        .get(id) as
+        | {
+            council_id: string
+            topic: string
+            snapshot_json: string | null
+            workspace_path: string | null
+            workspace_files_json: string | null
+          }
+        | undefined
+      if (!source) throw new AppError(404, 'not_found', 'session not found')
+      if (!db.prepare('SELECT id FROM councils WHERE id=?').get(source.council_id)) {
+        throw new AppError(
+          409,
+          'council_missing',
+          'The original council was deleted. Select a current council to run this question.',
+        )
+      }
+      const options = JSON.parse(source.snapshot_json ?? '{}') as {
+        researchEnabled?: boolean
+        budgetUsd?: number
+        consensusEnabled?: boolean
+      } | null
+      // A rerun uses current configuration, so record the current council snapshot too.
+      const snapshot = snapshotForCouncil(
+        source.council_id,
+        options?.researchEnabled,
+        options?.budgetUsd,
+        options?.consensusEnabled,
+      )
+      sessions.assertCapacity()
+      const newId = randomUUID()
+      db.prepare(
+        `INSERT INTO sessions (id, council_id, topic, status, snapshot_json, workspace_path, workspace_files_json)
+        VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+      ).run(newId, source.council_id, source.topic, snapshot, source.workspace_path, source.workspace_files_json)
+      sessions.startSession(newId, source.council_id, source.topic)
+      logActivity(db, `session.${action}`, { sessionId: newId, sourceSessionId: id })
+      reply.code(202)
+      return sessionToDTO(db.prepare('SELECT * FROM sessions WHERE id=?').get(newId) as never)
+    })
+  }
 
   app.get('/api/v1/sessions/:id/export', async (req, reply) => {
     const { id } = req.params as { id: string }

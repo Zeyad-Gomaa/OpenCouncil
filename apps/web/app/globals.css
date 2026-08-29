@@ -1820,3 +1820,29 @@ body > svg .error-text {
     white-space: nowrap;
   }
 }
+.research-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  text-align: left;
+}
+.research-option label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+.research-option input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--accent);
+}
+.activity-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.activity-controls select {
+  width: auto;
+}

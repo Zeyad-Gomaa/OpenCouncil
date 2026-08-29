@@ -2,15 +2,21 @@ services:
   opencouncil:
     build: .
     ports:
-      - '4311:4311'
+      - '127.0.0.1:4311:4311'
     environment:
-      # Required: without it, provider API keys stored in the UI become
-      # unreadable the next time this container restarts.
+      # Explicit stable key for this deployment; back it up with the data volume.
       OPEN_COUNCIL_SECRET_KEY: ${OPEN_COUNCIL_SECRET_KEY:?set OPEN_COUNCIL_SECRET_KEY in .env or the environment}
+      OPEN_COUNCIL_OPERATOR_TOKEN: ${OPEN_COUNCIL_OPERATOR_TOKEN:?set OPEN_COUNCIL_OPERATOR_TOKEN in .env or the environment}
       SEED_DEMO_COUNCIL: 'true'
       LOG_LEVEL: info
     volumes:
       - opencouncil-data:/app/data
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:4311/api/v1/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

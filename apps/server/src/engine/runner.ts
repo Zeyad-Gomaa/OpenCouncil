@@ -1,5 +1,5 @@
 /** The deliberation runner: executes a council session end-to-end. */
-import type { MemberDTO, StrategyKind } from '@opencouncil/shared'
+import type { ConsensusResult, MemberDTO, StrategyKind } from '@opencouncil/shared'
 import { decryptSecret } from '../vault/crypto.js'
 import { getAdapter } from '../providers/registry.js'
 import type { ChatMessage } from '../providers/types.js'
@@ -7,9 +7,12 @@ import { fitMessages } from './context-budgeter.js'
 import { Semaphore, withRetry } from './execution-policy.js'
 import { AuthError, ProviderHttpError, RateLimitError, TimeoutError } from '../lib/http.js'
 import { buildSynthesisMessages } from './moderator.js'
+import { buildMemberMessages } from './prompts.js'
+import { aggregateConsensus, peerReviewMessages } from './consensus.js'
+import { SpendingBudget } from './spending-budget.js'
 import { getStrategy } from './strategies.js'
 import { formatResearchMarkdown, researchTopic } from './web-search.js'
-import { WORKSPACE_TOOL_PROMPT, buildWorkspaceBriefing, parseToolCalls, runTool, stripToolBlocks } from './workspace.js'
+import { buildWorkspaceBriefing, parseToolCalls, runTool, stripToolBlocks } from './workspace.js'
 import type { SessionBus } from './bus.js'
 
 export interface TranscriptEntry {
@@ -23,7 +26,7 @@ export interface SessionController {
   signal: AbortSignal
   shouldConcludeEarly(): boolean
   getAdditionalRounds(): number
-  extend(additionalRounds: number): number
+  extend(additionalRounds: number): { added: number; total: number }
   conclude(reason?: string): void
   intervene(content: string): void
   consumeInterventions(): string[]
@@ -35,6 +38,11 @@ export function isSessionController(c: unknown): c is SessionController {
 
 export interface RunnerDeps {
   bus: SessionBus
+  researchEnabled?: boolean
+  loadResearchEnabled?(sessionId: string): boolean
+  loadSessionOptions?(sessionId: string): { budgetUsd?: number; consensusEnabled?: boolean }
+  saveSessionResult?(sessionId: string, key: 'budget' | 'consensus', value: unknown): void
+  maxSessionUsd?: number | null
   recordUsage(u: {
     sessionId: string
     providerId?: string | null
@@ -94,7 +102,7 @@ function computeCost(
   outPrice: number | null,
 ): number | null {
   if (promptTokens == null || completionTokens == null) return null
-  if (inPrice == null && outPrice == null) return null
+  if (inPrice == null || outPrice == null) return null
   const inCost = (promptTokens / 1_000_000) * (inPrice ?? 0) || 0
   const outCost = (completionTokens / 1_000_000) * (outPrice ?? 0) || 0
   return Number((inCost + outCost).toFixed(6))
@@ -145,6 +153,7 @@ export function renderTranscript(
 
 export class SessionRunner {
   private providerLimits = new Map<string, Semaphore>()
+  private spending = new Map<string, SpendingBudget>()
   constructor(private deps: RunnerDeps) {}
 
   async run(
@@ -161,6 +170,16 @@ export class SessionRunner {
       const council = this.deps.loadCouncil(councilId)
       if (!council) throw new Error('council not found')
       const activeMembers = council.members.filter((m) => m.enabled)
+      const options = this.deps.loadSessionOptions?.(sessionId) ?? {}
+      const configuredLimit = options.budgetUsd ?? null
+      const limit =
+        this.deps.maxSessionUsd == null
+          ? configuredLimit
+          : configuredLimit == null
+            ? this.deps.maxSessionUsd
+            : Math.min(configuredLimit, this.deps.maxSessionUsd)
+      const spending = new SpendingBudget(limit, (state) => this.deps.saveSessionResult?.(sessionId, 'budget', state))
+      this.spending.set(sessionId, spending)
       if (activeMembers.length === 0) throw new Error('council has no enabled members')
 
       this.deps.updateSessionStatus(sessionId, 'running')
@@ -196,71 +215,76 @@ export class SessionRunner {
       const strategy = getStrategy(council.strategy)
       const transcript: TranscriptEntry[] = []
 
-      // 1. Automatic live web research grounding (pages, images, videos)
-      try {
-        const pack = await researchTopic(topic, 7000)
-        const md = formatResearchMarkdown(pack)
-        if (md) {
-          transcript.push({
-            speaker: 'Web Research',
-            memberId: 'system_web',
-            round: 0,
-            content: md,
-          })
-          const searchMsgId = this.deps.insertMessage({
-            sessionId,
-            memberId: null,
-            memberName: 'Web Search',
-            kind: 'system',
-            round: 0,
-            roundPosition: 1,
-            content: md,
-          })
-          bus.publish({
-            type: 'message.created',
-            sessionId,
-            message: {
-              id: String(searchMsgId),
-              sessionId,
-              memberId: null,
-              memberName: 'Web Search',
-              role: 'assistant',
-              kind: 'system',
+      if (signal.aborted) throw new SessionCancelled()
+      // Web research is optional: private topics must not reach search providers.
+      if (this.deps.researchEnabled !== false && this.deps.loadResearchEnabled?.(sessionId) !== false) {
+        try {
+          const pack = await researchTopic(topic, 7000)
+          const md = formatResearchMarkdown(pack)
+          if (md) {
+            transcript.push({
+              speaker: 'Web Research',
+              memberId: 'system_web',
               round: 0,
               content: md,
-              createdAt: new Date().toISOString(),
-            },
-          })
-        } else {
-          const emptyId = this.deps.insertMessage({
-            sessionId,
-            memberId: null,
-            memberName: 'Web Search',
-            kind: 'system',
-            round: 0,
-            roundPosition: 1,
-            content: 'No live web sources were found for this question. The council will reason from model knowledge.',
-          })
-          bus.publish({
-            type: 'message.created',
-            sessionId,
-            message: {
-              id: String(emptyId),
+            })
+            const searchMsgId = this.deps.insertMessage({
               sessionId,
               memberId: null,
               memberName: 'Web Search',
-              role: 'assistant',
               kind: 'system',
               round: 0,
+              roundPosition: 1,
+              content: md,
+            })
+            bus.publish({
+              type: 'message.created',
+              sessionId,
+              message: {
+                id: String(searchMsgId),
+                sessionId,
+                memberId: null,
+                memberName: 'Web Search',
+                role: 'assistant',
+                kind: 'system',
+                round: 0,
+                content: md,
+                createdAt: new Date().toISOString(),
+              },
+            })
+          } else {
+            const emptyId = this.deps.insertMessage({
+              sessionId,
+              memberId: null,
+              memberName: 'Web Search',
+              kind: 'system',
+              round: 0,
+              roundPosition: 1,
               content:
                 'No live web sources were found for this question. The council will reason from model knowledge.',
-              createdAt: new Date().toISOString(),
-            },
-          })
+            })
+            bus.publish({
+              type: 'message.created',
+              sessionId,
+              message: {
+                id: String(emptyId),
+                sessionId,
+                memberId: null,
+                memberName: 'Web Search',
+                role: 'assistant',
+                kind: 'system',
+                round: 0,
+                content:
+                  'No live web sources were found for this question. The council will reason from model knowledge.',
+                createdAt: new Date().toISOString(),
+              },
+            })
+          }
+        } catch {
+          /* search is non-blocking */
         }
-      } catch {
-        /* search is non-blocking */
       }
+      if (signal.aborted) throw new SessionCancelled()
 
       const workspace = this.deps.loadWorkspace?.(sessionId) ?? null
       if (workspace?.root) {
@@ -368,13 +392,13 @@ export class SessionRunner {
               strategy.includeTranscript(roundNum) || transcript.length > 0,
               signal,
               false,
-              strategy.promptAddon,
+              strategy.instruction(roundNum),
               workspace?.root,
             )
           }
         } else {
           // Parallel (round robin / swarm / critique): members speak concurrently
-          await Promise.all(
+          const outcomes = await Promise.allSettled(
             memberIds.map(async (memberId, i) => {
               const member = activeMembers.find((m) => m.id === memberId)
               if (!member) return
@@ -388,11 +412,13 @@ export class SessionRunner {
                 strategy.includeTranscript(roundNum),
                 signal,
                 false,
-                strategy.promptAddon,
+                strategy.instruction(roundNum),
                 workspace?.root,
               )
             }),
           )
+          const rejected = outcomes.find((outcome) => outcome.status === 'rejected')
+          if (rejected?.status === 'rejected') throw rejected.reason
         }
 
         bus.publish({ type: 'round.completed', sessionId, round: roundNum })
@@ -402,6 +428,53 @@ export class SessionRunner {
           totalPlannedRounds = council.rounds + controller.getAdditionalRounds()
         }
       }
+
+      if (signal.aborted) throw new SessionCancelled()
+      if (!transcript.some((entry) => activeMembers.some((member) => member.id === entry.memberId))) {
+        throw new Error('No council member produced a response. Check enabled models, providers, and credentials.')
+      }
+
+      if (options.consensusEnabled) {
+        const latest = new Map<string, TranscriptEntry>()
+        for (const entry of transcript)
+          if (activeMembers.some((m) => m.id === entry.memberId)) latest.set(entry.memberId, entry)
+        const candidates: ConsensusResult['candidates'] = [...latest.values()].map((entry, i) => ({
+          id: `C${i + 1}`,
+          memberId: entry.memberId,
+          memberName: entry.speaker,
+          content: entry.content,
+        }))
+        const ordered = candidates.sort((a, b) => a.id.localeCompare(b.id))
+        const reviewOutcomes = await Promise.allSettled(
+          activeMembers.map(async (member) => ({
+            memberId: member.id,
+            text: await this.callPeerReview(sessionId, member, peerReviewMessages(topic, ordered), signal),
+          })),
+        )
+        const reviewFailure = reviewOutcomes.find((outcome) => outcome.status === 'rejected')
+        if (reviewFailure?.status === 'rejected') throw reviewFailure.reason
+        const reviews = reviewOutcomes
+          .filter(
+            (outcome): outcome is PromiseFulfilledResult<{ memberId: string; text: string | undefined }> =>
+              outcome.status === 'fulfilled',
+          )
+          .map((outcome) => outcome.value)
+        const consensus = aggregateConsensus(
+          ordered,
+          reviews.filter((r): r is { memberId: string; text: string } => typeof r.text === 'string'),
+          activeMembers.length,
+        )
+        this.deps.saveSessionResult?.(sessionId, 'consensus', consensus)
+        if (consensus.status === 'complete') {
+          transcript.push({
+            speaker: 'Peer Evaluation',
+            memberId: 'system_evaluation',
+            round: roundNum + 1,
+            content: `Structured anonymous peer rankings (preference, not proof): ${JSON.stringify(consensus)}`,
+          })
+        }
+      }
+      this.spending.get(sessionId)?.assertUsable()
 
       // Moderator synthesis (optional).
       const moderator = council.moderatorMemberId
@@ -413,6 +486,8 @@ export class SessionRunner {
         await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true)
       }
 
+      if (signal.aborted) throw new SessionCancelled()
+      this.deps.updateSessionStatus(sessionId, 'completed')
       bus.publish({ type: 'session.completed', sessionId })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -424,9 +499,77 @@ export class SessionRunner {
       this.deps.updateSessionStatus(sessionId, 'failed', msg)
       bus.publish({ type: 'session.failed', sessionId, error: msg })
       throw err
+    } finally {
+      this.spending.delete(sessionId)
     }
+  }
 
-    this.deps.updateSessionStatus(sessionId, 'completed')
+  private async callPeerReview(
+    sessionId: string,
+    member: MemberDTO,
+    messages: ChatMessage[],
+    signal: AbortSignal,
+  ): Promise<string | undefined> {
+    const model = this.deps.loadModelForChat(member.modelId)
+    if (!model) return undefined
+    const adapter = getAdapter(model.providerProtocol)
+    const semaphore = this.providerLimits.get(model.providerId) ?? new Semaphore(2)
+    this.providerLimits.set(model.providerId, semaphore)
+    try {
+      const bounded = fitMessages(messages, {
+        contextWindow: model.contextWindow,
+        responseTokens: Math.min(member.maxTokens ?? 1024, 2048),
+        safetyMargin: 128,
+      })
+      const attempted = await withRetry(
+        () =>
+          semaphore.run(async () => {
+            if (signal.aborted) throw new SessionCancelled()
+            const maxTokens = Math.min(member.maxTokens ?? 1024, 2048)
+            const settle = this.spending
+              .get(sessionId)
+              ?.reserve(bounded, maxTokens, model.inputPerMTokUsd, model.outputPerMTokUsd)
+            const value = await adapter.chat({
+              baseUrl: model.providerBaseUrl ?? adapter.defaultBaseUrl ?? '',
+              apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : undefined,
+              modelId: model.modelId,
+              temperature: 0,
+              maxTokens,
+              timeoutMs: CALL_TIMEOUT_MS,
+              signal,
+              messages: bounded,
+            })
+            const cost = computeCost(
+              value.promptTokens,
+              value.completionTokens,
+              model.inputPerMTokUsd,
+              model.outputPerMTokUsd,
+            )
+            settle?.(cost)
+            this.deps.recordUsage({
+              sessionId,
+              memberId: member.id,
+              memberName: `${member.name} (review)`,
+              providerId: model.providerId,
+              providerName: model.providerName,
+              modelId: model.stableModelId,
+              modelName: model.modelName || model.modelId,
+              promptTokens: value.promptTokens ?? 0,
+              completionTokens: value.completionTokens ?? 0,
+              costUsd: cost,
+              latencyMs: 0,
+              status: 'ok',
+            })
+            return value
+          }),
+        undefined,
+        signal,
+      )
+      return attempted.value.text
+    } catch (err) {
+      if (err instanceof Error && err.name === 'BudgetExceeded') throw err
+      return undefined
+    }
   }
 
   private async callMember(
@@ -441,7 +584,7 @@ export class SessionRunner {
     isSynthesis = false,
     promptAddon?: string,
     workspaceRoot?: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const { bus } = this.deps
     bus.publish({
       type: 'member.started',
@@ -468,48 +611,17 @@ export class SessionRunner {
     if (isSynthesis) {
       messages.push(...buildSynthesisMessages(topic, renderTranscript(transcript)))
     } else {
-      const systemPromptParts: string[] = []
-
-      systemPromptParts.push(
-        `You are @${member.name}, an expert participant in this AI council roundtable debate.\n` +
-          `DELIBERATION TOPIC:\n"${topic}"\n\n` +
-          (member.systemPrompt ? `YOUR ASSIGNED PERSONA & PERSPECTIVE:\n${member.systemPrompt}\n\n` : '') +
-          `CRITICAL IDENTITY & CHATROOM RULES:\n` +
-          `1. YOU ARE @${member.name}. NEVER refer to yourself in the third person. Do NOT say "I agree with @${member.name}" or "@${member.name} made a point".\n` +
-          `2. Any past statement labeled "[YOU (@${member.name})]" in the transcript was stated by YOU in earlier rounds. Build upon your own prior reasoning.\n` +
-          `3. Statements from other members are labeled with [@MemberName]. Tag and reference your peers directly by their handle (e.g. "@Visionary", "@Skeptic", "As @Strategist pointed out...").\n` +
-          `4. USER DIRECTIVES: If the transcript contains "[USER DIRECTIVE]", the human user has stepped in to guide or clarify the topic. Prioritize addressing the user's directive.\n` +
-          `5. WEB EVIDENCE & CITATIONS: Cite live links from the research briefing as [Title](url). When an image URL is provided, embed it with ![caption](url). Include video links when they help.\n` +
-          `6. DIAGRAMS: Prefer a simple \`\`\`mermaid flowchart TD\`\`\` when a picture helps. Node IDs must be alphanumeric (no spaces) — put labels in brackets: Foo[Label with spaces]. Never use the reserved word "end" as a node id. Use <br/> not <br>. Skip a diagram if the syntax would be unclear.\n` +
-          `7. CHATROOM DEBATE DYNAMICS: Treat this as an engaging, high-signal, fast-flowing intellectual debate. Critique flawed assumptions, concede solid points, offer concrete examples/solutions, and work through disagreements towards clarity and synthesis.` +
-          (promptAddon ? `\n\n${promptAddon}` : '') +
-          (workspaceRoot ? `\n\n${WORKSPACE_TOOL_PROMPT}` : ''),
+      messages.push(
+        ...buildMemberMessages({
+          member,
+          topic,
+          round,
+          transcript,
+          includeTranscript,
+          strategyInstruction: promptAddon,
+          workspaceRoot,
+        }),
       )
-
-      messages.push({ role: 'system', content: systemPromptParts.join('\n') })
-
-      if (includeTranscript && transcript.length > 0) {
-        messages.push({
-          role: 'system',
-          content:
-            `=== COUNCIL DEBATE TRANSCRIPT SO FAR ===\n\n` +
-            formatTranscriptForMember(transcript, member.id, member.name) +
-            `\n\n=== END OF TRANSCRIPT ===\n\nNow respond for Round ${round}. Speak directly to your council peers and advance the deliberation.`,
-        })
-      } else {
-        const grounding = extraGroundingFromTranscript(transcript)
-        if (grounding.length > 0) {
-          messages.push({
-            role: 'system',
-            content:
-              `=== GROUNDING (web research and user directives) ===\n\n` +
-              formatTranscriptForMember(grounding, member.id, member.name) +
-              `\n\n=== END OF GROUNDING ===`,
-          })
-        }
-      }
-
-      messages.push({ role: 'user', content: topic })
     }
 
     const budget = {
@@ -527,7 +639,7 @@ export class SessionRunner {
         apiKey: model.apiKeyEncrypted ? decryptSecret(model.apiKeyEncrypted) : undefined,
         modelId: model.modelId,
         temperature: member.temperature,
-        maxTokens: member.maxTokens ?? undefined,
+        maxTokens: member.maxTokens ?? 1024,
         timeoutMs: CALL_TIMEOUT_MS,
         signal,
       }
@@ -540,7 +652,24 @@ export class SessionRunner {
       for (let hop = 0; hop <= maxHops; hop++) {
         const bounded = fitMessages(working, budget)
         const attempted = await withRetry(
-          () => semaphore.run(() => adapter.chat({ ...chatBase, messages: bounded })),
+          () =>
+            semaphore.run(() => {
+              if (signal.aborted) throw new SessionCancelled()
+              const settle = this.spending
+                .get(sessionId)
+                ?.reserve(bounded, chatBase.maxTokens ?? 1024, model.inputPerMTokUsd, model.outputPerMTokUsd)
+              return adapter.chat({ ...chatBase, messages: bounded }).then((value) => {
+                settle?.(
+                  computeCost(
+                    value.promptTokens,
+                    value.completionTokens,
+                    model.inputPerMTokUsd,
+                    model.outputPerMTokUsd,
+                  ),
+                )
+                return value
+              })
+            }),
           undefined,
           signal,
         )
@@ -550,6 +679,8 @@ export class SessionRunner {
         text = attempted.value.text
         const tools = workspaceRoot && !isSynthesis ? parseToolCalls(text) : []
         if (!workspaceRoot || !tools.length) break
+        if (hop === maxHops) throw new Error('Workspace tool-hop limit reached before a final answer.')
+        if (tools.length > 8) throw new Error('Workspace tool-call limit exceeded (8 per hop).')
         const toolOut = tools.map((t) => runTool(workspaceRoot, t)).join('\n\n')
         working.push({ role: 'assistant', content: text })
         working.push({
@@ -557,7 +688,8 @@ export class SessionRunner {
           content: `TOOL RESULTS:\n${toolOut}\n\nContinue your council turn. If you have enough, reply without a tool block.`,
         })
       }
-      text = stripToolBlocks(text) || text
+      text = stripToolBlocks(text)
+      if (!text.trim()) throw new Error('Provider returned an empty response.')
       const result = { text, promptTokens, completionTokens }
 
       const latency = Date.now() - started
@@ -666,7 +798,9 @@ export class SessionRunner {
       }
 
       transcript.push({ speaker: member.name, memberId: member.id, round, content: result.text })
+      return result.text
     } catch (err) {
+      if (err instanceof Error && err.name === 'BudgetExceeded') throw err
       const latency = Date.now() - started
       const msgText = err instanceof Error ? err.message : String(err)
       const retryCount = Number((err as { retryCount?: number })?.retryCount ?? 0)

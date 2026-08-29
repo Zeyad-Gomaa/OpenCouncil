@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import MermaidDiagram from './MermaidDiagram'
+import { safeUrl } from '../lib/safeUrl'
 
 interface MarkdownRendererProps {
   content: string
@@ -26,7 +27,7 @@ function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return <TableBlock key={idx} rows={b.rows} />
         }
         if (b.type === 'heading') {
-          const Tag = `h${b.level}` as keyof JSX.IntrinsicElements
+          const Tag = `h${b.level}` as keyof React.JSX.IntrinsicElements
           return (
             <Tag
               key={idx}
@@ -219,18 +220,18 @@ function renderInline(text: string): React.ReactNode {
     if (match[1]) {
       // Image: ![alt](url)
       const alt = match[2] || ''
-      const src = match[3] || ''
+      const src = safeUrl(match[3] || '', true)
+      if (!src) {
+        elements.push(alt || '[blocked image]')
+        lastIndex = combined.lastIndex
+        continue
+      }
       elements.push(
         <span
           key={match.index}
           style={{ display: 'block', margin: '10px 0', borderRadius: 'var(--radius)', overflow: 'hidden' }}
         >
-          <img
-            src={src}
-            alt={alt}
-            style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid var(--border)' }}
-            loading="lazy"
-          />
+          <RemoteImage src={src} alt={alt} />
           {alt && (
             <span
               style={{
@@ -249,7 +250,12 @@ function renderInline(text: string): React.ReactNode {
     } else if (match[4]) {
       // Link: [text](url)
       const label = match[5] || ''
-      const href = match[6] || ''
+      const href = safeUrl(match[6] || '')
+      if (!href) {
+        elements.push(label)
+        lastIndex = combined.lastIndex
+        continue
+      }
       elements.push(
         <a
           key={match.index}
@@ -302,6 +308,30 @@ function renderInline(text: string): React.ReactNode {
   }
 
   return elements.length === 1 ? elements[0] : elements
+}
+
+function RemoteImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false)
+  if (!loaded)
+    return (
+      <button
+        type="button"
+        className="ghost sm"
+        onClick={() => setLoaded(true)}
+        title="Loading sends a request to this external host. Only load images you trust."
+      >
+        Load image from {new URL(src).host}
+      </button>
+    )
+  return (
+    <img
+      src={src}
+      alt={alt}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid var(--border)' }}
+    />
+  )
 }
 
 type Block =

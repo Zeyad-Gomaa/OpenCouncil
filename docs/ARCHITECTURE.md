@@ -1,267 +1,97 @@
 # OpenCouncil Architecture
 
-## Mission
+## Scope and stack
 
-OpenCouncil is a self-hosted, BYOK platform where a user convenes multiple LLMs —
-across any provider — as a council. One prompt is put to the whole council; each
-member researches independently; members then deliberate in a shared chatroom,
-respond to each other, and converge on an agreed answer. Every turn is streamed
-live to the chamber UI, logged, and metered for usage and cost.
+OpenCouncil is a single-operator BYOK council application. A Fastify API and
+statically exported Next.js UI ship as one Node process. SQLite stores
+configuration, transcripts, usage, and durable events. Provider keys are
+encrypted at rest; other database contents are plaintext.
 
-The design principle: **the user owns the keys, the data, and the orchestration.**
-No OpenCouncil-hosted inference. No vendor lock-in. The entire harness —
-orchestration, delegation, personas, strategies — is configurable.
+The current stack is TypeScript, Fastify 5, Next.js 16, React 19, Zod 3, and
+Node's built-in SQLite module (Node 22.5+). Fastify/Next upgrades are urgent
+maintenance work; see [the audit](AUDIT.md), not an assumption of current support.
 
-## Stack
+## Source layout
 
-| Layer      | Choice                                                          | Why                                                                                                                              |
-| ---------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Language   | TypeScript everywhere (strict)                                  | one mental model, shared types                                                                                                   |
-| Monorepo   | plain directories, one root manifest                            | no workspace linking to keep in sync; resolution runs through TS `paths`, an esbuild `--alias`, and Next's tsconfig-path support |
-| Web        | Next.js 14 (App Router) + React 18 + SSE                        | streaming transcript without websocket infra                                                                                     |
-| Server     | Node 20+, Fastify, ESM                                          | fast, schema-light, first-class SSE                                                                                              |
-| DB         | SQLite via Node.js `node:sqlite`                                | single-file, zero-ops, no native addon install                                                                                   |
-| Providers  | OpenAI-compatible HTTP, Anthropic Messages, Google Gemini, Mock | covers ~95% of the market incl. local runtimes (Ollama, LM Studio, vLLM)                                                         |
-| Validation | zod at every trust boundary                                     | API + config + env share one grammar                                                                                             |
-| Styling    | hand-rolled CSS custom properties                               | no framework tax, full theming control                                                                                           |
+| Location                                     | Responsibility                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------- |
+| `apps/server/src/cli.ts`                     | Packaged CLI, headless commands, static UI server                         |
+| `apps/server/src/index.ts`                   | API-only development entry point                                          |
+| `apps/server/src/app.ts`                     | App factory, request guards, database helpers                             |
+| `apps/server/src/db/connection.ts`           | SQLite interface, seven embedded migrations, interrupted-session recovery |
+| `apps/server/src/routes/`                    | Providers/models, members/councils, sessions/workspaces, config, activity |
+| `apps/server/src/engine/runner.ts`           | Research, rounds, tool hops, synthesis, metering                          |
+| `apps/server/src/engine/prompts.ts`          | Member prompt contract and evidence/instruction separation                |
+| `apps/server/src/engine/session-manager.ts`  | Queue, four concurrent sessions, cancellation and directives              |
+| `apps/server/src/engine/execution-policy.ts` | Retries, backoff, two concurrent calls per provider                       |
+| `apps/server/src/engine/workspace.ts`        | Read-only tree, file, and literal-search tools                            |
+| `apps/server/src/engine/bus.ts`              | Session event sequence numbers and pub/sub                                |
+| `apps/server/src/providers/`                 | OpenAI-compatible, Anthropic, Google, mock adapters and model catalogs    |
+| `apps/web/app/`                              | Home, history, `/sessions/view/?id=…`, settings, activity                 |
+| `packages/shared/src/`                       | Domain DTOs, event types, inbound Zod schemas                             |
 
-## Repository layout
+Root scripts build shared declarations, two esbuild server bundles, and a static
+Next export copied into `apps/server/dist/public`. Shared and server build outputs
+are committed for archive installs. Development uses Next on port 3000 with
+same-origin `/api` rewrites to the API on 4311.
 
-```
-opencouncil/
-├── apps/
-│   ├── server/          Fastify API + council engine
-│   │   └── src/
-│   │       ├── index.ts         entrypoint
-│   │       ├── app.ts           buildApp(): plugins + routes
-│   │       ├── config.ts        env parsing
-│   │       ├── db/
-│   │       │   ├── connection.ts
-│   │       │   ├── migrate.ts   embedded migrations
-│   │       │   └── seed.ts      demo council seeding
-│   │       ├── vault/
-│   │       │   └── crypto.ts    AES-256-GCM key storage
-│   │       ├── providers/
-│   │       │   ├── types.ts     ProviderAdapter interface
-│   │       │   ├── registry.ts  adapter lookup by protocol
-│   │       │   ├── openai-compatible.ts
-│   │       │   ├── anthropic.ts
-│   │       │   ├── google.ts
-│   │       │   └── mock.ts
-│   │       ├── engine/
-│   │       │   ├── bus.ts            per-session event bus (SSE fan-out)
-│   │       │   ├── session-manager.ts session lifecycle
-│   │       │   ├── runner.ts         the deliberation loop
-│   │       │   ├── moderator.ts      synthesis pass
-│   │       │   └── strategies/
-│   │       │       ├── types.ts
-│   │       │       ├── round-robin.ts
-│   │       │       └── debate.ts
-│   │       ├── routes/
-│   │       │   ├── councils.ts
-│   │       │   ├── models.ts
-│   │       │   ├── providers.ts
-│   │       │   ├── members.ts
-│   │       │   ├── sessions.ts
-│   │       │   └── activity.ts
-│   │       └── lib/
-│   │           ├── errors.ts    domain error -> HTTP mapping
-│   │           └── http.ts      typed fetch helper
-│   └── web/             Next.js chamber UI
-│       └── app/
-│           ├── layout.tsx  root shell + nav
-│           ├── page.tsx    sessions overview
-│           ├── globals.css
-│ OC        ├── sessions/
-│           │   ├── page.tsx        all sessions list
-│           │   └── [id]/page.tsx   the chamber (live transcript)
-│           ├── settings/page.tsx   providers / models / members / councils
-│           └── activity/page.tsx   usage dashboard
-│               └── components/
-│                   └── ActivityDashboard.tsx
-├── packages/shared/src/  zod schemas + TS types shared both sides
-└── docs/                 architecture, roadmap, API reference
-```
+## Session flow
 
-## Data model
+1. Validate the request and workspace; insert a queued session with a descriptive
+   council snapshot and research preference.
+2. The manager runs up to four sessions at once. Remaining jobs wait in memory.
+3. The runner loads the council, records the question, and optionally researches
+   it. A global disable overrides the session's research preference.
+4. Members deliberate under one of seven strategies. Debate and architecture
+   are sequential; round-robin, swarm, critique, review, and red-team run peers
+   in parallel. Strategy code controls which earlier responses are visible.
+5. Each provider has a two-call semaphore. Temporary provider errors retry with
+   bounded backoff. Retry-After is honored up to 60 seconds; longer requests fail
+   that turn rather than retrying too soon. Auth errors do not retry.
+6. Attached workspaces add bounded text briefings and up to four tool-follow-up
+   hops. Tools can read but not modify files. Tool arguments and returned text
+   are bounded. Prompt fitting uses a conservative UTF-8 byte estimate, always
+   retaining the system contract and final task; it is not a provider tokenizer.
+7. Successful responses and usage are persisted and emitted. Individual failures
+   produce error records; no successful member response means session failure.
+8. An optional moderator synthesizes the transcript. Final cancellation is checked,
+   terminal state is persisted, then the completion event is published.
 
-```
-providers        id, name, kind(static|openai_compatible), baseUrl, apiKeyEncrypted,
-                 defaultModelId, enabled, timestamps
-models           id(uuid), providerId FK, modelId(string e.g. gpt-4o),
-                 displayName, contextWindow, enabled
-members          id(uuid), name, modelId FK, systemPrompt, temperature,
-                 maxTokens, avatarColor, enabled
-councils         id(uuid), name, description, strategy(round_robin|debate),
-                 rounds, moderatorMemberId nullable FK, createdAt
-council_members  councilId+memberId composite PK (join table)
-sessions         id(uuid), councilId FK, topic, status(queued|running|
-                 completed|failed|cancelled), error, startedAt, completedAt
-messages         id(uuid auto), sessionId FK, memberId nullable (null = user/moderator-sys),
-                 role(user|assistant), kind(discussion|synthesis|user|system),
-                 round int, content text, createdAt
-usage_events     sessionId, memberName, providerName, modelName, promptTokens,
-                 completionTokens, totalTokens, costUsd, latencyMs, status(ok|error)
-activity_log     ts, action(e.g. provider.created), detail JSON
-settings_kv      key PK, value JSON (app settings: currency, budget caps later)
-```
+The session snapshot preserves historical names/settings for display; it is not
+an immutable executable plan. Queued sessions still read live configuration at
+execution time. Clone/rerun use current council configuration and copy the question,
+workspace, and research preference. Exact reproducibility is future work.
 
-Key invariants:
+## Persistence and events
 
-- `providers.api_key_encrypted` never leaves the server unencrypted; API responses
-  return `hasApiKey` boolean only.
-- Deleting a provider cascades its models; deleting a member removes it from
-  councils; deleting a council keeps its sessions (history preserved).
-- `messages.kind='synthesis'` marks the moderator's final answer.
+Tables include providers, models, members, councils, council_members, sessions,
+messages, usage_events, session_events, activity_log, and schema_migrations.
+Deleting configuration preserves session history. Message order is
+`round, round_position, id`. Startup marks interrupted sessions failed.
 
-## BYOK vault
+The bus persists an event before delivery. SSE supports `Last-Event-ID` and an
+`after` query cursor. The chamber advances its resume cursor and ignores duplicate
+IDs, preventing replayed usage from being counted twice. Tokens are currently
+shown after complete messages, not streamed token by token.
 
-Keys are encrypted at rest with AES-256-GCM. The master key comes from the
-`OPEN_COUNCIL_SECRET_KEY` env var (any string ≥ 8 chars); scrypt derives the
-AES key. If the var is absent, a random ephemeral key is generated **per boot**
-— keys stored while ephemeral become unreadable after restart, which the UI
-surfaces as a warning banner. For production, set the env var.
+Usage estimates require both input and output prices. Missing estimates are
+flagged in Activity; spend is not a provider invoice. Dashboard and CSV windows
+use UTC calendar days, including today. CSV batches are bounded to 1,000 rows.
 
-Ciphertext format: `<iv_b64>:<tag_b64>:<data_b64>`.
+## Trust boundaries
 
-## Provider adapters
+- Vault keys come from `OPEN_COUNCIL_SECRET_KEY` or a generated `.secret_key`
+  beside the database. Failure to persist a generated key warns and falls back
+  to an ephemeral key. Backups must retain the matching encryption key.
+- The default bind and Compose published port are loopback. Optional
+  single-operator authentication protects API and SSE routes. Browser Fetch
+  Metadata, Origin, and allowed-host checks remain defense in depth.
+- Workspace paths are canonicalized, external symlink targets rejected, and
+  common credentials blocked. These checks are not a hostile-filesystem sandbox
+  and cannot find all secrets in source code.
+- Web research sends topics to search providers unless disabled. Model catalogs
+  may contact OpenRouter for price overlays. The browser loads Mermaid from a
+  CDN. External transcript images require a click, and generated links accept
+  only explicit allowed schemes.
 
-One interface:
-
-```ts
-interface ProviderAdapter {
-  readonly protocol: ProviderProtocol
-  chat(opts: {
-    baseUrl: string
-    apiKey?: string
-    modelId: string
-    messages: ChatMessage[]
-    temperature?: number
-    maxTokens?: number
-    signal?: AbortSignal
-    timeoutMs: number
-  }): Promise<ChatResult>
-}
-```
-
-- `openai-compatible`: POST `{baseUrl}/chat/completions`. Covers OpenAI, Groq,
-  Together, Fireworks, DeepSeek, Mistral, xAI, Perplexity, Ollama (`/v1`),
-  LM Studio, vLLM, OpenRouter.
-- `anthropic`: POST `{baseUrl}/v1/messages`, `x-api-key` header,
-  `anthropic-version: 2023-06-01`.
-- `google`: POST `{baseUrl}/v1beta/models/{model}:generateContent`,
-  `x-goog-api-key` header. System prompt goes in `systemInstruction`.
-- `mock`: deterministic offline council for demos/tests — no network.
-
-Adapters throw typed errors (`AuthError`, `RateLimitError`, `TimeoutError`,
-`ProviderHttpError`) that map to precise HTTP codes and session failure reasons.
-
-## Council engine
-
-A session runs through phases driven by its council's strategy:
-
-1. **Round-robin** (default): each active member answers the topic in parallel
-   per round. After N rounds, the moderator (if set) receives the full
-   transcript and produces the synthesis.
-2. **Debate**: round 1 = independent positions; each subsequent round every
-   member sees the _full transcript so far_ and may rebut, concede, or refine.
-   Moderator synthesizes at the end.
-
-Engine mechanics:
-
-- `session-manager` owns lifecycle: queued → running → completed | failed |
-  cancelled, with abort controllers so a running session can be cancelled.
-- `bus` fans out typed events per session to any number of SSE subscribers:
-  `session.started`, `round.started`, `member.started`, `message.created`,
-  `member.completed`, `round.completed`, `moderator.started`,
-  `synthesis.completed`, `session.completed`, `session.failed`, `usage.recorded`.
-- Every LLM call writes a `usage_event` row (tokens, latency, cost estimate).
-  Cost = tokens × per-model pricing if configured on the model row, else null.
-- Failures are per-member: one member erroring doesn't kill the council —
-  the transcript records the failure and the rest continue.
-
-## Moderation
-
-Any enabled member can be flagged as the council's moderator (one per council,
-nullable). The moderator gets a synthesis system prompt ("chair of the council")
-plus the transcript, and must produce the final agreed answer. If no moderator
-is configured, the session completes with the raw transcript only.
-
-## API surface
-
-Base URL: `http://localhost:4311/api/v1`
-
-```
-GET    /health
-GET    /meta/providers            supported protocols + catalog presets
-GET    /providers                 list (keys redacted)
-POST   /providers                 add {name, protocol, baseUrl?, apiKey?, ...}
-PATCH  /providers/:id             update (apiKey optional = keep existing)
-DELETE /providers/:id             cascade models
-GET    /models                    ?providerId=
-POST   /models                    register {providerId, modelId, displayName...}
-PATCH  /models/:id                toggle/edit
-DELETE /models/:id
-GET    /members                   council seats w/ their model joined
-POST   /members                   create seat {name, modelId, systemPrompt...}
-PATCH  /members/:id
-DELETE /members/:id
-GET    /councils                  with members joined
-POST   /councils                  {name, strategy, rounds, memberIds[], moderatorMemberId?}
-GET    /councils/:id
-PATCH  /councils/:id
-DELETE /councils/:id              sessions kept
-GET    /sessions                  ?status=&limit=
-POST   /sessions                  {councilId, topic} → starts immediately (202)
-GET    /sessions/:id              snapshot incl. messages
-POST   /sessions/:id/cancel       abort a running council
-GET    /sessions/:id/events       SSE live stream
-GET    /activity/stats?days=30    aggregates: totals, per-day series,
-                                  per-member, per-model, per-provider
-```
-
-Errors: consistent envelope `{ error: { code, message, details? } }`.
-
-## Frontend
-
-Five surfaces, dark-chamber aesthetic (deep charcoal, brass/gold accents):
-
-- `/` + `/sessions` — session history, statuses, quick-start composer.
-- `/sessions/[id]` — the Chamber: left rail of council members (live status
-  dots: thinking/speaking/done/error), center transcript grouped by round,
-  synthesis pinned at top when present, live SSE updates, cancel button,
-  token/cost footer per message.
-- `/settings` — tabbed CRUD for Providers (add OpenAI/Anthropic/Google/Ollama/
-  custom with base URL + key), Models, Members (persona prompts, temperature),
-  Councils (strategy, rounds, roster, moderator pick).
-- `/activity` — totals cards, daily bar chart (pure CSS bars, no chart lib),
-  per-member/model/provider tables.
-
-State: server components fetch initial data; the chamber hydrates from the
-snapshot endpoint then subscribes to SSE. Poll-free, push-driven.
-
-## Security posture
-
-- Keys encrypted at rest (see vault).
-- Default bind `127.0.0.1`; remote exposure requires explicit HOST override +
-  is the operator's responsibility (docs say: put behind a reverse proxy with auth).
-- No telemetry, no outbound calls except to user-configured provider endpoints.
-- CORS: same-origin by default (web app proxies `/api` to the server).
-
-## Testing
-
-Vitest across packages:
-
-- unit: vault roundtrip, adapters against `mock` protocol + intercepted fetch,
-  strategies' ordering logic, activity aggregation math.
-- integration: in-memory SQLite migration chain, REST routes via `app.inject()`
-  (Fastify's light-my-request), full mock-council session end-to-end through the
-  engine with event capture.
-
-CI (GitHub Actions): install → typecheck → lint → test → build on every push/PR.
-
-## Deliberately out of scope (for now)
-
-Web search tools inside deliberation, vector memory, multi-user auth/SSO,
-Postgres backend, docker-compose bundle. All are roadmap items (see ROADMAP.md);
-the schema and interfaces leave room for them without breaking changes.
+See [SECURITY.md](../SECURITY.md), [API.md](API.md), and [ROADMAP.md](ROADMAP.md).
