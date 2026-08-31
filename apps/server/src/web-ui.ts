@@ -1,7 +1,20 @@
 /** Serve the Next static export without registering a GET * that swallows API routes. */
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+
+const CONTENT_TYPES: Record<string, string> = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+}
 
 export function isApiUrl(url: string): boolean {
   const pathname = url.split('?')[0] || ''
@@ -24,17 +37,36 @@ export function resolvePublicFile(webOutDir: string, urlPath: string): string | 
   return resolved
 }
 
-function sendExistingFile(
-  reply: { type: (t: string) => unknown; sendFile: (rel: string) => unknown },
-  webOutDir: string,
-  abs: string,
-): boolean {
-  if (!existsSync(abs) || !statSync(abs).isFile()) return false
-  const rel = path.relative(webOutDir, abs)
-  if (abs.endsWith('.html')) {
-    reply.type('text/html; charset=utf-8')
+function sendExistingFile(req: FastifyRequest, reply: FastifyReply, realWebOutDir: string, abs: string): boolean {
+  let realFile: string
+  let stat: ReturnType<typeof statSync>
+  try {
+    realFile = realpathSync(abs)
+    stat = statSync(realFile)
+  } catch {
+    return false
   }
-  reply.sendFile(rel)
+
+  // Reject symlinks (including a symlinked parent directory) that leave the
+  // static export, even if the lexical path passed resolvePublicFile().
+  const relative = path.relative(realWebOutDir, realFile)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return false
+
+  if (!stat.isFile()) return false
+  const extension = path.extname(realFile).toLowerCase()
+  const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`
+  const immutable = relative.split(path.sep).slice(0, 2).join('/') === '_next/static'
+
+  reply.header('ETag', etag)
+  reply.header('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : 'no-cache')
+  if (req.headers['if-none-match']?.split(',').some((candidate) => candidate.trim() === etag)) {
+    reply.status(304).send()
+    return true
+  }
+
+  reply.type(CONTENT_TYPES[extension] ?? 'application/octet-stream')
+  reply.header('Content-Length', stat.size)
+  reply.send(createReadStream(realFile))
   return true
 }
 
@@ -45,18 +77,7 @@ export async function registerWebUi(app: FastifyInstance, webOutDir: string): Pr
     })
     return false
   }
-
-  const staticHandler = (await import('@fastify/static')).default
-  // `serve: false` only decorates reply.sendFile — it must not register GET /*
-  // (that catch-all is what 404'd OpenRouter "Pull models" as "no such API route").
-  await app.register(staticHandler, {
-    root: webOutDir,
-    prefix: '/',
-    wildcard: false,
-    serve: false,
-    decorateReply: true,
-    index: ['index.html'],
-  })
+  const realWebOutDir = realpathSync(webOutDir)
 
   app.setNotFoundHandler((req, reply) => {
     if (isApiUrl(req.url)) {
@@ -72,25 +93,20 @@ export async function registerWebUi(app: FastifyInstance, webOutDir: string): Pr
 
     const rawPath = req.url.split('?')[0] || '/'
     const direct = resolvePublicFile(webOutDir, rawPath)
-    if (direct && sendExistingFile(reply, webOutDir, direct)) return
+    if (direct && sendExistingFile(req, reply, realWebOutDir, direct)) return
 
     const dirIndex = resolvePublicFile(webOutDir, path.posix.join(rawPath, 'index.html'))
-    if (dirIndex && sendExistingFile(reply, webOutDir, dirIndex)) return
+    if (dirIndex && sendExistingFile(req, reply, realWebOutDir, dirIndex)) return
 
     const htmlNamed = resolvePublicFile(webOutDir, `${rawPath.replace(/\/+$/, '')}.html`)
-    if (htmlNamed && sendExistingFile(reply, webOutDir, htmlNamed)) return
+    if (htmlNamed && sendExistingFile(req, reply, realWebOutDir, htmlNamed)) return
 
     const rootIndex = path.join(webOutDir, 'index.html')
-    if (existsSync(rootIndex)) {
-      reply.type('text/html; charset=utf-8').send(createReadStream(rootIndex))
-      return
-    }
+    if (sendExistingFile(req, reply, realWebOutDir, rootIndex)) return
 
     const fallback = path.join(webOutDir, '404.html')
-    if (existsSync(fallback)) {
-      reply.status(404).type('text/html; charset=utf-8').send(createReadStream(fallback))
-      return
-    }
+    reply.status(404)
+    if (sendExistingFile(req, reply, realWebOutDir, fallback)) return
     reply.status(404).send({ error: { code: 'not_found', message: 'no such route' } })
   })
 

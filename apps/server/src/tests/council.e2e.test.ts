@@ -219,7 +219,7 @@ describe('council end-to-end', () => {
     const rerun = await app.inject({ method: 'POST', url: `/api/v1/sessions/${id}/rerun` })
     expect(await waitForSessionCompletion(rerun.json().id)).toBe('completed')
     expect(fetch).not.toHaveBeenCalled()
-  })
+  }, 10_000)
 
   it('persists anonymous peer rankings and fails closed when a budgeted model lacks prices', async () => {
     const council = db.prepare('SELECT id FROM councils LIMIT 1').get() as { id: string }

@@ -22,8 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Upgraded to Fastify 5.12, @fastify/static 10.1, Next.js 16.3, React 19.2,
-  Node 22 types, and current build tooling; Vitest remains on compatible 3.2.7.
+- Upgraded to Fastify 5.12, Next.js 16.3, React 19.2, Node 22 types, and current
+  build tooling; Vitest remains on compatible 3.2.7.
 - Builds no longer fetch Google Fonts; containers run as a non-root user and include a healthcheck.
 - Prompt context fitting preserves the system contract and final task, and
   workspace tool arguments/results now have explicit bounds.
@@ -58,6 +58,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Adding a provider opens the live catalog so you can enroll models immediately.
 
 ### Fixed
+
+- Clone installs now use a shallow checkout and runtime-only dependencies, the
+  documented launch path no longer relies on `npx`, wildcard binds print a
+  browser-safe localhost URL, and the UI turns an unreachable startup check
+  into a timed, actionable error instead of waiting on “Connecting” forever.
+- The packaged server now streams its fixed static export directly with safe
+  path resolution, MIME types, ETags, and immutable caching for hashed assets.
+  Removing the otherwise-unused static plugin tree and bundling validation code
+  substantially reduces fresh-install dependency count and disk usage.
 
 - Workspace symlink escapes, direct access to common credentials, and unsafe
   model-generated regex searches. Grep now uses literal matching.

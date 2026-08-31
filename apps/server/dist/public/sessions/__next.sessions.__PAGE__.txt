@@ -1,6 +1,6 @@
 1:"$Sreact.fragment"
 2:I[671,[],"ClientPageRoot"]
-3:I[1603,["825","static/chunks/825-c56ef468f97f379e.js","898","static/chunks/app/sessions/page-37d20a1e00224be4.js"],"default"]
+3:I[1603,["825","static/chunks/825-c56ef468f97f379e.js","898","static/chunks/app/sessions/page-f7e1711cdb505008.js"],"default"]
 6:I[887,[],"OutletBoundary"]
 7:"$Sreact.suspense"
 b:I[887,[],"ViewportBoundary"]
@@ -8,8 +8,8 @@ c:I[887,[],"MetadataBoundary"]
 d:I[214,[],"IconMark"]
 f:I[9630,[],""]
 10:I[1380,[],""]
-13:I[4450,["825","static/chunks/825-c56ef468f97f379e.js","177","static/chunks/app/layout-1ddeb094b84289f8.js"],"default"]
-14:I[6215,["825","static/chunks/825-c56ef468f97f379e.js","177","static/chunks/app/layout-1ddeb094b84289f8.js"],"default"]
+13:I[4450,["825","static/chunks/825-c56ef468f97f379e.js","177","static/chunks/app/layout-3fea77bc300ac192.js"],"default"]
+14:I[6215,["825","static/chunks/825-c56ef468f97f379e.js","177","static/chunks/app/layout-3fea77bc300ac192.js"],"default"]
 :HL["/_next/static/css/85f89d865dfee912.css","style"]
 a:X
 12:X

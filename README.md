@@ -19,20 +19,42 @@ The API and the chamber UI ship as one Node process on one port.
 **From a clone:**
 
 ```bash
-git clone https://github.com/Zeyad-Gomaa/OpenCouncil.git
+git clone --depth 1 https://github.com/Zeyad-Gomaa/OpenCouncil.git
 cd OpenCouncil
-npm install
-npx opencouncil
+npm ci --omit=dev --ignore-scripts
+npm start
 ```
 
-`npm install` installs dependencies. If the prebuilt server or UI is missing,
-it compiles them. `npx opencouncil` then serves the API and the chamber on
-port 4311.
+This downloads only the runtime dependencies and uses the prebuilt server and
+UI committed to the repository. Keep `npm start` running. When it prints the
+`UI` address, open that exact address (normally http://127.0.0.1:4311).
 
-Open http://127.0.0.1:4311. A demo council of mock members is seeded on first
-boot, so you can watch a full deliberation without any API keys.
+Run a quick installation check at any time:
 
-**Global install from a GitHub archive:**
+```bash
+npm run start -- doctor
+```
+
+A demo council of mock members is seeded on first boot, so you can watch a full
+deliberation without any API keys.
+
+Use a full `npm ci` only when you intend to develop or rebuild OpenCouncil; it
+also installs Next.js, TypeScript, and the rest of the development toolchain.
+
+**Install without cloning or administrator access:**
+
+```bash
+mkdir OpenCouncil
+cd OpenCouncil
+npm install --ignore-scripts https://github.com/Zeyad-Gomaa/OpenCouncil/archive/refs/heads/main.tar.gz
+npm exec -- opencouncil
+```
+
+This keeps OpenCouncil and its database in the new directory and avoids global
+npm permission problems. Keep the last command running and open the printed
+`UI` address.
+
+**Optional global install from the same archive:**
 
 ```bash
 npm install -g https://github.com/Zeyad-Gomaa/OpenCouncil/archive/refs/heads/main.tar.gz
@@ -42,6 +64,10 @@ opencouncil
 The archive includes the production server and static UI, so installation does
 not compile Next.js. Prefer a tagged release
 (`.../refs/tags/vX.Y.Z.tar.gz`) when you want a pinned version.
+
+After a global installation, `opencouncil doctor` should report
+`staticAssets: ok`. Keep `opencouncil` running and wait for the `UI` address
+before opening the browser.
 
 Do not use `npm install -g github:Zeyad-Gomaa/OpenCouncil`. npm installs a
 global git dependency by symlinking it into `~/.npm/_cacache/tmp`, which npm
@@ -213,6 +239,19 @@ and configuration are not encrypted. Schema migrations run automatically at star
 `schema_migrations`.
 
 ## Troubleshooting
+
+**The page stays on “Connecting to the server”.** Keep the terminal command
+running and wait until it prints `UI → http://…`; then open that exact URL. Do
+not open the exported HTML file directly. Check the install with
+`npm run start -- doctor` from a clone or `opencouncil doctor` after a global
+install. Node must be 22.5 or newer. If port 4311 is occupied, use
+`npm start -- --port 4321` (or `opencouncil --port 4321`) and open the new URL.
+
+**The clone or dependency download stalls.** The shallow clone above avoids
+downloading repository history. If npm is still waiting on the registry, retry
+with `npm ci --omit=dev --ignore-scripts`; this is the smallest supported local
+install. A timeout or DNS error at that stage is between the machine and GitHub
+or npm, not the OpenCouncil server.
 
 **Pull models returns "no such API route".** The process you are talking to is
 an older binary. Stop it and start again (`npx opencouncil` or `npm start`)

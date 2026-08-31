@@ -44,7 +44,7 @@
     "build": "npm run build:shared && npm run build:server && npm run build:web",
     "bundle": "npm run build",
     "build:shared": "tsc -p packages/shared",
-    "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
+    "build:server": "esbuild apps/server/src/cli.ts --bundle --platform=node --format=esm --target=node22 --external:fastify '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/cli.js && esbuild apps/server/src/index.ts --bundle --platform=node --format=esm --target=node22 --external:fastify '--alias:@opencouncil/shared=./packages/shared/dist/index.js' --outfile=apps/server/dist/index.js",
     "prebuild:web": "npm run clean:generated",
     "build:web": "next build apps/web --webpack && node scripts/copy-web.js",
     "dev": "npm run build:shared && npm run build:server && concurrently -n api,web -c magenta,cyan \"npm run dev:api\" \"npm run dev:web\"",
@@ -63,9 +63,7 @@
     "prepare": "node scripts/prepare.js"
   },
   "dependencies": {
-    "@fastify/static": "^10.1.3",
-    "fastify": "^5.12.1",
-    "zod": "^3.23.8"
+    "fastify": "^5.12.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -83,6 +81,7 @@
     "react-dom": "^19.2.8",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "zod": "^3.23.8"
   }
 }

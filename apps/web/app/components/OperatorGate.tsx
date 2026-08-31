@@ -10,9 +10,9 @@ export default function OperatorGate({ children }: { children: React.ReactNode }
   const [busy, setBusy] = useState(false)
   const check = useCallback(() => {
     setError('')
-    apiGet<{ enabled: boolean; authenticated: boolean }>('/auth/status')
+    apiGet<{ enabled: boolean; authenticated: boolean }>('/auth/status', { timeoutMs: 8000 })
       .then(setStatus)
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
   useEffect(() => {
     check()
@@ -59,15 +59,22 @@ export default function OperatorGate({ children }: { children: React.ReactNode }
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
-        ) : (
+        ) : !error ? (
           <p>Connecting to the server…</p>
+        ) : (
+          <div role="alert">
+            <h2>Couldn’t reach the server</h2>
+            <p>{error}</p>
+            <p>
+              Keep <code>npm start</code> (or <code>opencouncil</code>) running, then open the exact UI URL printed in
+              that terminal.
+            </p>
+            <button className="btn" onClick={check}>
+              Retry
+            </button>
+          </div>
         )}
-        {error && <p role="alert">{error}</p>}
-        {!status && error && (
-          <button className="btn" onClick={check}>
-            Retry
-          </button>
-        )}
+        {status && error && <p role="alert">{error}</p>}
       </main>
     )
   return (

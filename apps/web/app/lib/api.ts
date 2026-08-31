@@ -5,6 +5,11 @@
  */
 export const API = '/api/v1'
 
+type GetOptions = {
+  /** Abort browser requests that are only used to establish server readiness. */
+  timeoutMs?: number
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('opencouncil:unauthorized'))
@@ -20,9 +25,20 @@ async function handle<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, options: GetOptions = {}): Promise<T> {
   const url = `${API}${path}`.replace(/\/+$/, '')
-  return handle<T>(await fetch(url, { cache: 'no-store' }))
+  const controller = options.timeoutMs ? new AbortController() : undefined
+  const timer = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : undefined
+  try {
+    return handle<T>(await fetch(url, { cache: 'no-store', signal: controller?.signal }))
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error('The OpenCouncil server did not respond. Check the terminal where you started it.')
+    }
+    throw error
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 export async function apiSend<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<T> {

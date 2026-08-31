@@ -471,6 +471,10 @@ export async function main(): Promise<void> {
   const { loadConfig } = await import('./config.js')
   const config = loadConfig()
 
+  if (args.command === 'serve') {
+    console.log(`[opencouncil] starting on ${config.host}:${config.port}…`)
+  }
+
   const { initVault } = await import('./vault/crypto.js')
   initVault(config.secretKey)
 
@@ -536,8 +540,9 @@ export async function main(): Promise<void> {
   }
 
   await app.listen({ host: config.host, port: config.port })
-  console.log(`[opencouncil] API  → http://${config.host}:${config.port}/api/v1`)
-  if (uiReady) console.log(`[opencouncil] UI   → http://${config.host}:${config.port}`)
+  const browserHost = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host
+  console.log(`[opencouncil] API  → http://${browserHost}:${config.port}/api/v1`)
+  if (uiReady) console.log(`[opencouncil] UI   → http://${browserHost}:${config.port}`)
 }
 
 main().catch((err) => {

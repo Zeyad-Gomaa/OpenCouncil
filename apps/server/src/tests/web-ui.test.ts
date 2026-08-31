@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -33,14 +33,20 @@ describe('static UI does not swallow catalog routes', () => {
   let db: DB
   let app: Awaited<ReturnType<typeof buildApp>>
   let dir: string
+  let outside: string
 
   beforeAll(async () => {
     setVaultKeyForTests('test-secret-webui')
     dir = path.join(os.tmpdir(), `oc-ui-${Date.now()}`)
     mkdirSync(path.join(dir, 'settings'), { recursive: true })
+    mkdirSync(path.join(dir, '_next', 'static'), { recursive: true })
     writeFileSync(path.join(dir, 'index.html'), '<html>home</html>')
     writeFileSync(path.join(dir, 'settings', 'index.html'), '<html>settings</html>')
+    writeFileSync(path.join(dir, '_next', 'static', 'app.js'), 'console.log("ready")')
     writeFileSync(path.join(dir, 'secret.txt'), 'nope')
+    outside = path.join(os.tmpdir(), `oc-ui-outside-${Date.now()}.txt`)
+    writeFileSync(outside, 'outside export')
+    symlinkSync(outside, path.join(dir, 'escape.txt'))
 
     const config = {
       ...loadConfig({} as never),
@@ -72,6 +78,7 @@ describe('static UI does not swallow catalog routes', () => {
 
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true })
+    rmSync(outside, { force: true })
   })
 
   it('serves GET and POST catalog after the UI is mounted', async () => {
@@ -99,8 +106,33 @@ describe('static UI does not swallow catalog routes', () => {
     const home = await app.inject({ method: 'GET', url: '/' })
     expect(home.statusCode).toBe(200)
     expect(home.body).toContain('home')
+    expect(home.headers['content-type']).toMatch(/^text\/html/)
+    expect(home.headers['cache-control']).toBe('no-cache')
+    expect(home.headers.etag).toMatch(/^W\//)
     const settings = await app.inject({ method: 'GET', url: '/settings/' })
     expect(settings.statusCode).toBe(200)
     expect(settings.body).toContain('settings')
+  })
+
+  it('serves hashed assets with MIME metadata and immutable caching', async () => {
+    const asset = await app.inject({ method: 'GET', url: '/_next/static/app.js' })
+    expect(asset.statusCode).toBe(200)
+    expect(asset.headers['content-type']).toMatch(/^text\/javascript/)
+    expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable')
+    expect(asset.body).toContain('ready')
+
+    const cached = await app.inject({
+      method: 'GET',
+      url: '/_next/static/app.js',
+      headers: { 'if-none-match': asset.headers.etag! },
+    })
+    expect(cached.statusCode).toBe(304)
+    expect(cached.body).toBe('')
+  })
+
+  it('does not follow static-file symlinks outside the export', async () => {
+    const escaped = await app.inject({ method: 'GET', url: '/escape.txt' })
+    expect(escaped.body).not.toContain('outside export')
+    expect(escaped.body).toContain('home')
   })
 })
