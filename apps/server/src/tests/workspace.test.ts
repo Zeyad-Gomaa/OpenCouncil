@@ -97,6 +97,12 @@ describe('workspace', () => {
     expect(grep).toMatch(/app\.ts:2:/)
   })
 
+  it('enforces an explicit selected-file allowlist for tools', () => {
+    writeFileSync(path.join(dir, 'sibling.ts'), 'const sibling = true')
+    expect(runTool(dir, { name: 'read_file', path: 'sibling.ts' }, ['src/app.ts'])).toContain('outside the selected')
+    expect(runTool(dir, { name: 'read_file', path: 'src/app.ts' }, ['src/app.ts'])).toContain('export const x')
+  })
+
   it('normalizes a pointed file into that file’s directory', () => {
     const ref = normalizeWorkspace(path.join(dir, 'src', 'app.ts'))
     expect(ref.root).toBe(path.join(dir, 'src'))

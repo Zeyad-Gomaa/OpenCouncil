@@ -43,17 +43,37 @@ export function fitMessages(messages: ChatMessage[], budget: ContextBudget): Cha
   const systemIndexes = messages.map((m, i) => (m.role === 'system' ? i : -1)).filter((i) => i >= 0)
   const firstSystemIndex = systemIndexes[0]
   let lastTaskIndex = -1
+  // The first user message is the operator's task. Later user messages may be
+  // tool output or directives and must never displace the task under pressure.
+  let taskIndex = -1
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role !== 'system') {
       lastTaskIndex = i
       break
     }
   }
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]!.role === 'user') {
+      taskIndex = i
+      break
+    }
+  }
+  // With a single user message it is the final task; with multiple user
+  // messages, later entries are normally tool results or directives.
+  const userCount = messages.filter((m) => m.role === 'user').length
+  const lastUserContent = lastTaskIndex >= 0 ? messages[lastTaskIndex]!.content : ''
+  const hasToolResultTail = /^(?:TOOL RESULTS|WORKSPACE TOOL RESULTS):/i.test(lastUserContent.trim())
+  const requiredTaskIndex = userCount > 1 && taskIndex >= 0 && hasToolResultTail ? taskIndex : lastTaskIndex
   const chosen = new Map<number, ChatMessage>()
 
-  if (firstSystemIndex != null && firstSystemIndex >= 0 && lastTaskIndex >= 0 && firstSystemIndex !== lastTaskIndex) {
+  if (
+    firstSystemIndex != null &&
+    firstSystemIndex >= 0 &&
+    requiredTaskIndex >= 0 &&
+    firstSystemIndex !== requiredTaskIndex
+  ) {
     const systemMessage = messages[firstSystemIndex]!
-    const taskMessage = messages[lastTaskIndex]!
+    const taskMessage = messages[requiredTaskIndex]!
     const mandatoryCost = estimateTokens(systemMessage.content) + estimateTokens(taskMessage.content)
     if (mandatoryCost <= available) {
       chosen.set(firstSystemIndex, systemMessage)
@@ -61,11 +81,12 @@ export function fitMessages(messages: ChatMessage[], budget: ContextBudget): Cha
     } else {
       const systemShare = Math.max(1, Math.floor(available * 0.55))
       chosen.set(firstSystemIndex, clip(systemMessage, systemShare))
-      chosen.set(lastTaskIndex, clip(taskMessage, available - systemShare, true))
+      chosen.set(requiredTaskIndex, clip(taskMessage, available - systemShare, true))
     }
   } else {
-    const mandatory = firstSystemIndex != null && firstSystemIndex >= 0 ? firstSystemIndex : Math.max(0, lastTaskIndex)
-    chosen.set(mandatory, clip(messages[mandatory]!, available, mandatory === lastTaskIndex))
+    const mandatory =
+      firstSystemIndex != null && firstSystemIndex >= 0 ? firstSystemIndex : Math.max(0, requiredTaskIndex)
+    chosen.set(mandatory, clip(messages[mandatory]!, available, mandatory === requiredTaskIndex))
   }
 
   let used = [...chosen.values()].reduce((sum, message) => sum + estimateTokens(message.content), 0)

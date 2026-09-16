@@ -416,6 +416,7 @@ export class SessionRunner {
               strategy.instruction(roundNum),
               workspace?.root,
               webSearchEnabled,
+              workspace?.files,
             )
           }
         } else {
@@ -437,6 +438,7 @@ export class SessionRunner {
                 strategy.instruction(roundNum),
                 workspace?.root,
                 webSearchEnabled,
+                workspace?.files,
               )
             }),
           )
@@ -506,7 +508,18 @@ export class SessionRunner {
       if (moderator && transcript.length > 0) {
         if (signal.aborted) throw new Error('cancelled')
         bus.publish({ type: 'moderator.started', sessionId })
-        await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true)
+        const synthesis = await this.callMember(
+          sessionId,
+          moderator,
+          topic,
+          transcript,
+          roundNum + 1,
+          0,
+          true,
+          signal,
+          true,
+        )
+        if (!synthesis?.trim()) throw new Error('Moderator synthesis failed; the review is incomplete.')
       }
 
       if (signal.aborted) throw new SessionCancelled()
@@ -608,6 +621,7 @@ export class SessionRunner {
     promptAddon?: string,
     workspaceRoot?: string,
     webSearchEnabled = false,
+    workspaceFiles: string[] = [],
   ): Promise<string | undefined> {
     const { bus } = this.deps
     bus.publish({
@@ -724,7 +738,7 @@ export class SessionRunner {
                 }`
               }
               if (!workspaceRoot) return 'workspace tool error: no workspace is attached'
-              return runTool(workspaceRoot, tool)
+              return runTool(workspaceRoot, tool, workspaceFiles)
             }),
           )
         ).join('\n\n')

@@ -23,4 +23,17 @@ describe('context budgeter', () => {
   it('counts UTF-8 bytes rather than underestimating non-ASCII text', () => {
     expect(estimateTokens('😀😀😀😀')).toBe(4)
   })
+
+  it('preserves the original task after tool results are appended', () => {
+    const fitted = fitMessages(
+      [
+        msg('system', 'SYSTEM'),
+        msg('user', 'ORIGINAL TASK ' + 'q'.repeat(40)),
+        msg('assistant', 'tool call'),
+        msg('user', 'TOOL RESULTS ' + 'x'.repeat(800)),
+      ],
+      { contextWindow: 100, responseTokens: 20, safetyMargin: 10 },
+    )
+    expect(fitted.some((m) => m.content.includes('ORIGINAL TASK'))).toBe(true)
+  })
 })

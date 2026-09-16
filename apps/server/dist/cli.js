@@ -453,16 +453,27 @@ function fitMessages(messages, budget) {
   const systemIndexes = messages.map((m, i) => m.role === "system" ? i : -1).filter((i) => i >= 0);
   const firstSystemIndex = systemIndexes[0];
   let lastTaskIndex = -1;
+  let taskIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== "system") {
       lastTaskIndex = i;
       break;
     }
   }
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "user") {
+      taskIndex = i;
+      break;
+    }
+  }
+  const userCount = messages.filter((m) => m.role === "user").length;
+  const lastUserContent = lastTaskIndex >= 0 ? messages[lastTaskIndex].content : "";
+  const hasToolResultTail = /^(?:TOOL RESULTS|WORKSPACE TOOL RESULTS):/i.test(lastUserContent.trim());
+  const requiredTaskIndex = userCount > 1 && taskIndex >= 0 && hasToolResultTail ? taskIndex : lastTaskIndex;
   const chosen = /* @__PURE__ */ new Map();
-  if (firstSystemIndex != null && firstSystemIndex >= 0 && lastTaskIndex >= 0 && firstSystemIndex !== lastTaskIndex) {
+  if (firstSystemIndex != null && firstSystemIndex >= 0 && requiredTaskIndex >= 0 && firstSystemIndex !== requiredTaskIndex) {
     const systemMessage = messages[firstSystemIndex];
-    const taskMessage = messages[lastTaskIndex];
+    const taskMessage = messages[requiredTaskIndex];
     const mandatoryCost = estimateTokens2(systemMessage.content) + estimateTokens2(taskMessage.content);
     if (mandatoryCost <= available) {
       chosen.set(firstSystemIndex, systemMessage);
@@ -470,11 +481,11 @@ function fitMessages(messages, budget) {
     } else {
       const systemShare = Math.max(1, Math.floor(available * 0.55));
       chosen.set(firstSystemIndex, clip(systemMessage, systemShare));
-      chosen.set(lastTaskIndex, clip(taskMessage, available - systemShare, true));
+      chosen.set(requiredTaskIndex, clip(taskMessage, available - systemShare, true));
     }
   } else {
-    const mandatory = firstSystemIndex != null && firstSystemIndex >= 0 ? firstSystemIndex : Math.max(0, lastTaskIndex);
-    chosen.set(mandatory, clip(messages[mandatory], available, mandatory === lastTaskIndex));
+    const mandatory = firstSystemIndex != null && firstSystemIndex >= 0 ? firstSystemIndex : Math.max(0, requiredTaskIndex);
+    chosen.set(mandatory, clip(messages[mandatory], available, mandatory === requiredTaskIndex));
   }
   let used = [...chosen.values()].reduce((sum, message) => sum + estimateTokens2(message.content), 0);
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -887,15 +898,20 @@ function boundToolText(value) {
   return `${value.slice(0, MAX_TOOL_TEXT)}
 [\u2026tool result truncated\u2026]`;
 }
-function runTool(root, call) {
+function runTool(root, call, allowedFiles = []) {
   try {
+    const allowed = new Set(allowedFiles.map((f) => f.replace(/\\/g, "/").replace(/^\.\//, "")));
+    const isAllowed = (rel) => !allowed.size || allowed.has(rel.replace(/\\/g, "/").replace(/^\.\//, ""));
     if (call.name === "list_dir") {
-      const entries = listTree(root, call.path || ".");
+      const entries = listTree(root, call.path || ".").filter(
+        (entry) => !allowed.size || [...allowed].some((f) => f === entry.replace(/\/$/, "") || f.startsWith(entry))
+      );
       return boundToolText(`list_dir ${call.path || "."}
 ${entries.join("\n") || "(empty)"}`);
     }
     if (call.name === "read_file") {
       if (!call.path) return "read_file error: path required";
+      if (!isAllowed(call.path)) return "read_file error: file is outside the selected workspace scope";
       return boundToolText(
         `read_file ${call.path}
 ${readWorkspaceFile(root, call.path, call.startLine, call.endLine)}`
@@ -903,7 +919,9 @@ ${readWorkspaceFile(root, call.path, call.startLine, call.endLine)}`
     }
     if (call.name === "grep") {
       if (!call.pattern) return "grep error: pattern required";
-      const hits = grepWorkspace(root, call.pattern, call.path || ".", call.glob);
+      const hits = grepWorkspace(root, call.pattern, call.path || ".", call.glob).filter(
+        (hit) => !allowed.size || [...allowed].some((f) => hit.startsWith(`${f}:`))
+      );
       return boundToolText(`grep ${call.pattern}
 ${hits.join("\n") || "(no matches)"}`);
     }
@@ -6005,7 +6023,8 @@ Agents can list, read, and search these files.`,
                   false,
                   strategy.instruction(roundNum),
                   workspace?.root,
-                  webSearchEnabled
+                  webSearchEnabled,
+                  workspace?.files
                 );
               }
             } else {
@@ -6025,7 +6044,8 @@ Agents can list, read, and search these files.`,
                     false,
                     strategy.instruction(roundNum),
                     workspace?.root,
-                    webSearchEnabled
+                    webSearchEnabled,
+                    workspace?.files
                   );
                 })
               );
@@ -6083,7 +6103,18 @@ Agents can list, read, and search these files.`,
           if (moderator && transcript.length > 0) {
             if (signal.aborted) throw new Error("cancelled");
             bus.publish({ type: "moderator.started", sessionId });
-            await this.callMember(sessionId, moderator, topic, transcript, roundNum + 1, 0, true, signal, true);
+            const synthesis = await this.callMember(
+              sessionId,
+              moderator,
+              topic,
+              transcript,
+              roundNum + 1,
+              0,
+              true,
+              signal,
+              true
+            );
+            if (!synthesis?.trim()) throw new Error("Moderator synthesis failed; the review is incomplete.");
           }
           if (signal.aborted) throw new SessionCancelled();
           this.deps.updateSessionStatus(sessionId, "completed");
@@ -6161,7 +6192,7 @@ Agents can list, read, and search these files.`,
           return void 0;
         }
       }
-      async callMember(sessionId, member, topic, transcript, round, roundPosition, includeTranscript, signal, isSynthesis = false, promptAddon, workspaceRoot, webSearchEnabled = false) {
+      async callMember(sessionId, member, topic, transcript, round, roundPosition, includeTranscript, signal, isSynthesis = false, promptAddon, workspaceRoot, webSearchEnabled = false, workspaceFiles = []) {
         const { bus } = this.deps;
         bus.publish({
           type: "member.started",
@@ -6268,7 +6299,7 @@ Agents can list, read, and search these files.`,
 ${results.map((result2) => `- [${result2.title}](${result2.url}): ${result2.snippet}`).join("\n") || "(no results)"}`;
                 }
                 if (!workspaceRoot) return "workspace tool error: no workspace is attached";
-                return runTool(workspaceRoot, tool);
+                return runTool(workspaceRoot, tool, workspaceFiles);
               })
             )).join("\n\n");
             working.push({ role: "assistant", content: text });

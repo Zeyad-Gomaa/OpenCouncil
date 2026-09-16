@@ -370,21 +370,28 @@ function boundToolText(value: string): string {
   return `${value.slice(0, MAX_TOOL_TEXT)}\n[…tool result truncated…]`
 }
 
-export function runTool(root: string, call: ToolCall): string {
+export function runTool(root: string, call: ToolCall, allowedFiles: string[] = []): string {
   try {
+    const allowed = new Set(allowedFiles.map((f) => f.replace(/\\/g, '/').replace(/^\.\//, '')))
+    const isAllowed = (rel: string) => !allowed.size || allowed.has(rel.replace(/\\/g, '/').replace(/^\.\//, ''))
     if (call.name === 'list_dir') {
-      const entries = listTree(root, call.path || '.')
+      const entries = listTree(root, call.path || '.').filter(
+        (entry) => !allowed.size || [...allowed].some((f) => f === entry.replace(/\/$/, '') || f.startsWith(entry)),
+      )
       return boundToolText(`list_dir ${call.path || '.'}\n${entries.join('\n') || '(empty)'}`)
     }
     if (call.name === 'read_file') {
       if (!call.path) return 'read_file error: path required'
+      if (!isAllowed(call.path)) return 'read_file error: file is outside the selected workspace scope'
       return boundToolText(
         `read_file ${call.path}\n${readWorkspaceFile(root, call.path, call.startLine, call.endLine)}`,
       )
     }
     if (call.name === 'grep') {
       if (!call.pattern) return 'grep error: pattern required'
-      const hits = grepWorkspace(root, call.pattern, call.path || '.', call.glob)
+      const hits = grepWorkspace(root, call.pattern, call.path || '.', call.glob).filter(
+        (hit) => !allowed.size || [...allowed].some((f) => hit.startsWith(`${f}:`)),
+      )
       return boundToolText(`grep ${call.pattern}\n${hits.join('\n') || '(no matches)'}`)
     }
     return `unknown tool ${String((call as { name: string }).name)}`
